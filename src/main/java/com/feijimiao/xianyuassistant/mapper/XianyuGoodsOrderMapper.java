@@ -1,0 +1,158 @@
+package com.feijimiao.xianyuassistant.mapper;
+
+import com.feijimiao.xianyuassistant.entity.XianyuGoodsOrder;
+import org.apache.ibatis.annotations.*;
+
+import java.util.List;
+
+/**
+ * 商品订单Mapper
+ */
+@Mapper
+public interface XianyuGoodsOrderMapper {
+    
+    @Insert("INSERT INTO xianyu_goods_order (xianyu_account_id, xianyu_goods_id, xy_goods_id, pnm_id, order_id, buyer_user_id, buyer_user_name, sid, content, delivery_mode, rule_name, delivery_snapshot, external_allocation_id, external_confirm_state, external_return_state, external_return_reason, trigger_source, trigger_content, state, fail_reason, confirm_state, create_time) " +
+            "VALUES (#{xianyuAccountId}, #{xianyuGoodsId}, #{xyGoodsId}, #{pnmId}, #{orderId}, #{buyerUserId}, #{buyerUserName}, #{sid}, #{content}, #{deliveryMode}, #{ruleName}, #{deliverySnapshot}, #{externalAllocationId}, COALESCE(#{externalConfirmState}, 0), COALESCE(#{externalReturnState}, 0), #{externalReturnReason}, #{triggerSource}, #{triggerContent}, #{state}, #{failReason}, #{confirmState}, COALESCE(#{createTime}, strftime('%Y-%m-%d %H:%M:%S', 'now', '+8 hours')))")
+    @Options(useGeneratedKeys = true, keyProperty = "id")
+    int insert(XianyuGoodsOrder record);
+    
+    @Select("SELECT * FROM xianyu_goods_order WHERE xianyu_account_id = #{accountId} ORDER BY create_time DESC")
+    List<XianyuGoodsOrder> selectByAccountId(@Param("accountId") Long accountId);
+    
+    @Delete("DELETE FROM xianyu_goods_order WHERE xianyu_account_id = #{accountId}")
+    int deleteByAccountId(@Param("accountId") Long accountId);
+    
+    @Select("<script>" +
+            "SELECT r.*, " +
+            "g.title as goods_title " +
+            "FROM xianyu_goods_order r " +
+            "LEFT JOIN xianyu_goods g ON r.xy_goods_id = g.xy_good_id " +
+            "WHERE r.xianyu_account_id = #{accountId} " +
+            "<if test='xyGoodsId != null and xyGoodsId != \"\"'>" +
+            "AND r.xy_goods_id = #{xyGoodsId} " +
+            "</if>" +
+            "<if test='state != null'>" +
+            "AND r.state = #{state} " +
+            "</if>" +
+            "ORDER BY r.create_time DESC " +
+            "LIMIT #{limit} OFFSET #{offset}" +
+            "</script>")
+    @Results({
+        @Result(property = "id", column = "id"),
+        @Result(property = "xianyuAccountId", column = "xianyu_account_id"),
+        @Result(property = "xianyuGoodsId", column = "xianyu_goods_id"),
+        @Result(property = "xyGoodsId", column = "xy_goods_id"),
+        @Result(property = "pnmId", column = "pnm_id"),
+        @Result(property = "orderId", column = "order_id"),
+        @Result(property = "buyerUserId", column = "buyer_user_id"),
+        @Result(property = "buyerUserName", column = "buyer_user_name"),
+        @Result(property = "sid", column = "sid"),
+        @Result(property = "content", column = "content"),
+        @Result(property = "deliveryMode", column = "delivery_mode"),
+        @Result(property = "ruleName", column = "rule_name"),
+        @Result(property = "deliverySnapshot", column = "delivery_snapshot"),
+        @Result(property = "externalAllocationId", column = "external_allocation_id"),
+        @Result(property = "externalConfirmState", column = "external_confirm_state"),
+        @Result(property = "externalReturnState", column = "external_return_state"),
+        @Result(property = "externalReturnReason", column = "external_return_reason"),
+        @Result(property = "triggerSource", column = "trigger_source"),
+        @Result(property = "triggerContent", column = "trigger_content"),
+        @Result(property = "state", column = "state"),
+        @Result(property = "failReason", column = "fail_reason"),
+        @Result(property = "confirmState", column = "confirm_state"),
+        @Result(property = "createTime", column = "create_time"),
+        @Result(property = "goodsTitle", column = "goods_title")
+    })
+    List<XianyuGoodsOrder> selectByAccountIdWithPage(
+            @Param("accountId") Long accountId,
+            @Param("xyGoodsId") String xyGoodsId,
+            @Param("state") Integer state,
+            @Param("limit") int limit,
+            @Param("offset") int offset);
+    
+    @Select("<script>" +
+            "SELECT COUNT(*) FROM xianyu_goods_order " +
+            "WHERE xianyu_account_id = #{accountId} " +
+            "<if test='xyGoodsId != null and xyGoodsId != \"\"'>" +
+            "AND xy_goods_id = #{xyGoodsId} " +
+            "</if>" +
+            "<if test='state != null'>" +
+            "AND state = #{state} " +
+            "</if>" +
+            "</script>")
+    long countByAccountId(@Param("accountId") Long accountId, @Param("xyGoodsId") String xyGoodsId, @Param("state") Integer state);
+    
+    @Update("UPDATE xianyu_goods_order SET state = #{state} WHERE id = #{id}")
+    int updateState(@Param("id") Long id, @Param("state") Integer state);
+    
+    @Update("UPDATE xianyu_goods_order SET state = #{state}, content = #{content} WHERE id = #{id}")
+    int updateStateAndContent(@Param("id") Long id, @Param("state") Integer state, @Param("content") String content);
+
+    @Update("UPDATE xianyu_goods_order SET state = #{state}, content = #{content}, fail_reason = #{failReason} WHERE id = #{id}")
+    int updateStateContentAndFailReason(@Param("id") Long id, @Param("state") Integer state, @Param("content") String content, @Param("failReason") String failReason);
+
+    @Update("UPDATE xianyu_goods_order SET delivery_mode = #{deliveryMode}, rule_name = #{ruleName}, delivery_snapshot = #{deliverySnapshot} WHERE id = #{id}")
+    int updateDeliverySnapshot(@Param("id") Long id, @Param("deliveryMode") Integer deliveryMode, @Param("ruleName") String ruleName, @Param("deliverySnapshot") String deliverySnapshot);
+
+    @Update("UPDATE xianyu_goods_order SET external_allocation_id = #{allocationId} WHERE id = #{id}")
+    int updateExternalAllocation(@Param("id") Long id, @Param("allocationId") String allocationId);
+
+    @Update("UPDATE xianyu_goods_order SET external_confirm_state = #{state} WHERE id = #{id}")
+    int updateExternalConfirmState(@Param("id") Long id, @Param("state") Integer state);
+
+    @Update("UPDATE xianyu_goods_order SET external_return_state = #{state}, external_return_reason = #{reason} WHERE id = #{id}")
+    int updateExternalReturnState(@Param("id") Long id, @Param("state") Integer state, @Param("reason") String reason);
+    
+    @Select("SELECT * FROM xianyu_goods_order WHERE xianyu_account_id = #{accountId} AND xy_goods_id = #{xyGoodsId} AND order_id = #{orderId} LIMIT 1")
+    XianyuGoodsOrder selectByOrderId(@Param("accountId") Long accountId, @Param("xyGoodsId") String xyGoodsId, @Param("orderId") String orderId);
+
+    @Select("SELECT * FROM xianyu_goods_order WHERE xianyu_account_id = #{accountId} AND xy_goods_id = #{xyGoodsId} AND order_id = #{orderId} ORDER BY create_time DESC LIMIT 1")
+    XianyuGoodsOrder selectLatestByOrderId(@Param("accountId") Long accountId, @Param("xyGoodsId") String xyGoodsId, @Param("orderId") String orderId);
+
+    @Select("SELECT * FROM xianyu_goods_order WHERE xianyu_account_id = #{accountId} AND order_id = #{orderId} ORDER BY create_time DESC LIMIT 1")
+    XianyuGoodsOrder selectByAccountIdAndOrderId(@Param("accountId") Long accountId, @Param("orderId") String orderId);
+
+    @Select("SELECT * FROM xianyu_goods_order WHERE xianyu_account_id = #{accountId} AND order_id = #{orderId} AND delivery_mode = 4 AND external_allocation_id IS NOT NULL AND external_allocation_id != '' AND COALESCE(external_return_state, 0) != 1 ORDER BY create_time DESC LIMIT 1")
+    XianyuGoodsOrder selectReturnableApiDeliveryByOrder(@Param("accountId") Long accountId, @Param("orderId") String orderId);
+    
+    @Update("UPDATE xianyu_goods_order SET confirm_state = 1 WHERE xianyu_account_id = #{accountId} AND order_id = #{orderId}")
+    int updateConfirmState(@Param("accountId") Long accountId, @Param("orderId") String orderId);
+    
+    @Select("SELECT * FROM xianyu_goods_order WHERE xianyu_account_id = #{accountId} AND pnm_id = #{pnmId}")
+    XianyuGoodsOrder selectByPnmId(@Param("accountId") Long accountId, @Param("pnmId") String pnmId);
+
+    @Select("SELECT * FROM xianyu_goods_order WHERE xianyu_account_id = #{accountId} AND xy_goods_id = #{xyGoodsId} AND sid = #{sid} ORDER BY create_time DESC LIMIT 1")
+    XianyuGoodsOrder selectLatestBySid(@Param("accountId") Long accountId, @Param("xyGoodsId") String xyGoodsId, @Param("sid") String sid);
+
+    @Select("SELECT * FROM xianyu_goods_order WHERE id = #{id}")
+    XianyuGoodsOrder selectById(@Param("id") Long id);
+
+    @Select("SELECT * FROM xianyu_goods_order WHERE id = #{id} AND xianyu_account_id = #{accountId} AND xy_goods_id = #{xyGoodsId} LIMIT 1")
+    XianyuGoodsOrder selectByIdAndAccountAndGoods(@Param("id") Long id,
+                                                  @Param("accountId") Long accountId,
+                                                  @Param("xyGoodsId") String xyGoodsId);
+
+    @Select("SELECT COUNT(*) FROM xianyu_goods_order WHERE date(create_time) = date('now', '-1 day', 'localtime')")
+    int countYesterdayOrders();
+
+    @Select("SELECT COUNT(*) FROM xianyu_goods_order WHERE state = 1")
+    int countDeliverySuccess();
+
+    @Select("SELECT COUNT(*) FROM xianyu_goods_order WHERE state = -1")
+    int countDeliveryFail();
+
+    @Select("SELECT COUNT(*) FROM xianyu_goods_order")
+    int countAllOrders();
+
+    @Select("SELECT COUNT(*) FROM xianyu_goods_order WHERE date(create_time) = #{date}")
+    int countOrdersByDate(@Param("date") String date);
+
+    @Select("SELECT COUNT(*) FROM xianyu_goods_order WHERE state = 1 AND date(create_time) = #{date}")
+    int countDeliverySuccessByDate(@Param("date") String date);
+
+    @Select("SELECT COUNT(*) FROM xianyu_goods_order WHERE state = -1 AND date(create_time) = #{date}")
+    int countDeliveryFailByDate(@Param("date") String date);
+
+    @Select("SELECT COUNT(*) FROM xianyu_goods_order WHERE state = 0")
+    int countPendingDelivery();
+}

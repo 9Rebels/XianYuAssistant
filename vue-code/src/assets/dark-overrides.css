@@ -1,0 +1,388 @@
+/* Dark mode page-level overrides for legacy light surfaces. */
+
+:root.dark .dashboard,
+:root.dark .connection,
+:root.dark .ad,
+:root.dark .ar,
+:root.dark .orders,
+:root.dark .ol {
+  --d-bg: transparent;
+  --d-surface: var(--app-surface);
+  --d-surface-hover: var(--app-surface-hover);
+  --d-surface-active: var(--app-surface-strong);
+  --d-surface-solid: var(--app-surface-strong);
+  --d-bg-muted: var(--app-bg-muted);
+  --d-bg-sunken: color-mix(in srgb, var(--app-text) 5%, transparent);
+  --d-border: var(--app-border);
+  --d-border-strong: var(--app-border-strong);
+  --d-shadow-sm: var(--app-shadow-soft);
+  --d-shadow-md: var(--app-shadow-strong);
+  --d-shadow-lg: var(--app-shadow-strong);
+  --d-text-primary: var(--app-text);
+  --d-text-secondary: var(--app-text-muted);
+  --d-text-tertiary: var(--app-text-soft);
+  --d-accent: var(--app-accent);
+  --d-danger: var(--app-danger);
+  --d-success: var(--app-success);
+  --d-warning: var(--app-warning);
+  --d-price: var(--app-danger);
+}
+
+:root.dark .notify-page {
+  --notify-surface: var(--app-surface);
+  --notify-surface-strong: var(--app-surface-strong);
+  --notify-border: var(--app-border);
+  --notify-border-strong: var(--app-border-strong);
+  --notify-text: var(--app-text);
+  --notify-muted: var(--app-text-muted);
+  --notify-soft: var(--app-text-soft);
+  --notify-accent: var(--app-accent);
+  --notify-success: var(--app-success);
+  --notify-warning: var(--app-warning);
+  --notify-danger: var(--app-danger);
+}
+
+:root.dark .el-button--primary,
+:root.dark .btn--primary,
+:root.dark .settings__btn--primary,
+:root.dark .delivery-settings__btn--primary,
+:root.dark .notify-btn--primary {
+  background: var(--app-accent) !important;
+  border-color: var(--app-accent) !important;
+  color: #ffffff !important;
+}
+
+:root.dark .el-button--primary:hover:not(.is-disabled),
+:root.dark .btn--primary:hover:not(:disabled),
+:root.dark .settings__btn--primary:hover:not(:disabled),
+:root.dark .delivery-settings__btn--primary:hover:not(:disabled),
+:root.dark .notify-btn--primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--app-accent) 82%, #ffffff) !important;
+  border-color: color-mix(in srgb, var(--app-accent) 82%, #ffffff) !important;
+}
+
+:root.dark .el-button--default,
+:root.dark .btn--secondary,
+:root.dark .settings__btn--secondary,
+:root.dark .delivery-settings__btn,
+:root.dark .notify-btn--secondary {
+  background: var(--app-surface) !important;
+  border-color: var(--app-border-strong) !important;
+  color: var(--app-text) !important;
+}
+
+:root.dark .el-button.is-disabled,
+:root.dark .el-button.is-disabled:hover,
+:root.dark .btn:disabled,
+:root.dark .settings__btn:disabled,
+:root.dark .delivery-settings__btn--disabled,
+:root.dark .delivery-settings__btn:disabled,
+:root.dark .notify-btn:disabled,
+:root.dark .dp__export-btn:disabled,
+:root.dark .ar__chat-send-btn:disabled,
+:root.dark .ar__records-page-btn:disabled {
+  background: color-mix(in srgb, var(--app-text) 5%, transparent) !important;
+  border-color: var(--app-border) !important;
+  color: var(--app-text-soft) !important;
+  opacity: 1 !important;
+  cursor: not-allowed;
+}
+
+:root.dark .dashboard__tabs,
+:root.dark .orders__tabs,
+:root.dark .delivery-settings__segmented,
+:root.dark .notify-tabs {
+  background: color-mix(in srgb, var(--app-text) 6%, transparent) !important;
+  border-color: var(--app-border) !important;
+}
+
+:root.dark .dashboard__tab,
+:root.dark .orders__tab,
+:root.dark .dp__quick-btn,
+:root.dark .dp__toggle-btn,
+:root.dark .delivery-settings__segmented-btn,
+:root.dark .notify-tab {
+  color: var(--app-text-muted) !important;
+}
+
+:root.dark .dashboard__tab--active,
+:root.dark .orders__tab--active,
+:root.dark .dp__quick-btn--active,
+:root.dark .dp__toggle-btn--active,
+:root.dark .delivery-settings__segmented-btn--active,
+:root.dark .notify-tab--active {
+  background: var(--app-surface-strong) !important;
+  color: var(--app-text) !important;
+  border-color: var(--app-border) !important;
+  box-shadow: var(--app-shadow-soft) !important;
+}
+
+:root.dark .stat-card,
+:root.dark .dashboard .section,
+:root.dark .dp__card,
+:root.dark .dp__chart-card,
+:root.dark .order-stats,
+:root.dark .connection__content,
+:root.dark .ad__goods-panel,
+:root.dark .ad__config-panel,
+:root.dark .ar__goods-panel,
+:root.dark .ar__config-panel,
+:root.dark .orders__content,
+:root.dark .ol__account-panel,
+:root.dark .ol__logs-panel,
+:root.dark .notify-panel,
+:root.dark .settings__panel {
+  background: var(--app-surface) !important;
+  border-color: var(--app-border) !important;
+  color: var(--app-text) !important;
+}
+
+:root.dark .step-card,
+:root.dark .feature-card,
+:root.dark .faq-item__answer p,
+:root.dark .order-stats__metric,
+:root.dark .order-stats__panel,
+:root.dark .ad__rule-pill,
+:root.dark .ad__stat-card,
+:root.dark .ad__trigger-card,
+:root.dark .ad__api-hint-col,
+:root.dark .ad__record-card,
+:root.dark .ar__rule-card,
+:root.dark .ar__data-card,
+:root.dark .ar__record-card,
+:root.dark .orders__business-card,
+:root.dark .ol__log-card,
+:root.dark .notify-dispatch__option,
+:root.dark .notify-channel-list,
+:root.dark .notify-channel-config,
+:root.dark .notify-check,
+:root.dark .notify-log,
+:root.dark .settings__provider-card,
+:root.dark .settings__choice-card,
+:root.dark .settings__operation-row,
+:root.dark .delivery-settings__status-card,
+:root.dark .delivery-settings__media-card,
+:root.dark .delivery-settings__pick-card,
+:root.dark .delivery-settings__selected-image {
+  background: color-mix(in srgb, var(--app-text) 4%, transparent) !important;
+  border-color: var(--app-border) !important;
+  color: var(--app-text) !important;
+}
+
+:root.dark .step-card:hover,
+:root.dark .feature-card:hover,
+:root.dark .ad__goods-item:hover,
+:root.dark .ar__goods-item:hover,
+:root.dark .ol__account-item:hover,
+:root.dark .ol__log-card:hover,
+:root.dark .notify-channel:hover,
+:root.dark .notify-log:hover {
+  background: color-mix(in srgb, var(--app-text) 7%, transparent) !important;
+}
+
+:root.dark .step-card--active,
+:root.dark .ad__goods-item--active,
+:root.dark .ad__rule-pill--active,
+:root.dark .ar__goods-item--active,
+:root.dark .orders__filter-chip--active,
+:root.dark .ol__account-item--active,
+:root.dark .notify-dispatch__option--active,
+:root.dark .notify-channel--active,
+:root.dark .settings__choice-card--active,
+:root.dark .delivery-settings__pick-card--active {
+  background: color-mix(in srgb, var(--app-accent) 16%, transparent) !important;
+  border-color: color-mix(in srgb, var(--app-accent) 45%, var(--app-border)) !important;
+}
+
+:root.dark .connection__toolbar,
+:root.dark .ad__goods-toolbar,
+:root.dark .ad__goods-search,
+:root.dark .ad__config-header,
+:root.dark .ad__config-section + .ad__config-section,
+:root.dark .ar__goods-toolbar,
+:root.dark .ar__goods-search,
+:root.dark .ar__config-header,
+:root.dark .ar__config-section + .ar__config-section,
+:root.dark .ar__chat-input-area,
+:root.dark .orders__toolbar,
+:root.dark .orders__pagination,
+:root.dark .ol__account-toolbar,
+:root.dark .ol__logs-toolbar,
+:root.dark .ol__filter-bar,
+:root.dark .ol__pagination,
+:root.dark .notify-log-list,
+:root.dark .notify-empty,
+:root.dark .notify-panel__header,
+:root.dark .ar__records-pagination,
+:root.dark .delivery-settings__section {
+  border-color: var(--app-border) !important;
+}
+
+:root.dark .ad__goods-search-input,
+:root.dark .ad__select,
+:root.dark .ad__input,
+:root.dark .ad__textarea,
+:root.dark .ad__records-filter,
+:root.dark .ar__goods-search-input,
+:root.dark .ar__select,
+:root.dark .ar__textarea,
+:root.dark .ar__field-control,
+:root.dark .ar__chat-input,
+:root.dark .ar__delay-input,
+:root.dark .orders__input,
+:root.dark .orders__select,
+:root.dark .orders__filter-input,
+:root.dark .ol__header-select,
+:root.dark .ol__account-select,
+:root.dark .ol__select,
+:root.dark .ol__runtime-log-select,
+:root.dark .ol__dialog-input,
+:root.dark .notify-input,
+:root.dark .settings__input,
+:root.dark .settings__textarea,
+:root.dark .delivery-settings__input,
+:root.dark .delivery-settings__select,
+:root.dark .delivery-settings__textarea,
+:root.dark .image-upload-area {
+  background: var(--app-surface-strong) !important;
+  border-color: var(--app-border-strong) !important;
+  color: var(--app-text) !important;
+}
+
+:root.dark .ad__api-hint-code,
+:root.dark .ad__api-hint-pre,
+:root.dark .ad__api-protocol-code,
+:root.dark .ar__delay-config,
+:root.dark .ar__detail-msg-item,
+:root.dark .ar__detail-reply-content,
+:root.dark .ar__detail-context-body,
+:root.dark .ol__detail-pre,
+:root.dark .delivery-settings__empty,
+:root.dark .image-upload-area:hover {
+  background: var(--app-bg-muted) !important;
+  border-color: var(--app-border) !important;
+  color: var(--app-text) !important;
+}
+
+:root.dark .ad__dialog,
+:root.dark .ar__dialog,
+:root.dark .ar__rule-dialog,
+:root.dark .ar__records-dialog,
+:root.dark .ar__detail-dialog,
+:root.dark .orders__dialog,
+:root.dark .orders__filter-sheet,
+:root.dark .ol__dialog,
+:root.dark .detail-section,
+:root.dark .info-box,
+:root.dark .main-actions,
+:root.dark .manual-cookie-modal,
+:root.dark .form-textarea {
+  background: var(--app-surface-strong) !important;
+  border-color: var(--app-border) !important;
+  color: var(--app-text) !important;
+}
+
+:root.dark .ad__dialog-header,
+:root.dark .ad__dialog-footer,
+:root.dark .ar__dialog-header,
+:root.dark .ar__dialog-footer,
+:root.dark .ar__rule-dialog-header,
+:root.dark .ar__records-dialog-header,
+:root.dark .ar__detail-dialog-header,
+:root.dark .orders__dialog-header,
+:root.dark .orders__dialog-footer,
+:root.dark .ol__dialog-header,
+:root.dark .ol__dialog-footer,
+:root.dark .connection-detail-dialog .el-dialog__header,
+:root.dark .connection-detail-dialog .el-dialog__footer,
+:root.dark .mobile-dialog .el-dialog__header,
+:root.dark .mobile-dialog .el-dialog__footer {
+  background: var(--app-surface-strong) !important;
+  border-color: var(--app-border) !important;
+  color: var(--app-text) !important;
+}
+
+:root.dark .info-box-value,
+:root.dark .cookie-value,
+:root.dark .token-value,
+:root.dark .main-card-header,
+:root.dark .section-title,
+:root.dark .logs-header,
+:root.dark .delivery-settings__field label,
+:root.dark .delivery-settings__status-card strong {
+  color: var(--app-text) !important;
+}
+
+:root.dark .section-note,
+:root.dark .info-box-label,
+:root.dark .info-box-meta,
+:root.dark .action-tip,
+:root.dark .delivery-settings__counter,
+:root.dark .delivery-settings__empty,
+:root.dark .notify-log__content,
+:root.dark .notify-log__time {
+  color: var(--app-text-muted) !important;
+}
+
+:root.dark .ad__switch-track,
+:root.dark .ar__switch-track,
+:root.dark .notify-switch__track,
+:root.dark .settings__switch-track,
+:root.dark .delivery-settings__switch i {
+  background: color-mix(in srgb, var(--app-text) 16%, transparent) !important;
+}
+
+:root.dark .ad__switch-thumb,
+:root.dark .ar__switch-thumb,
+:root.dark .notify-switch__thumb,
+:root.dark .settings__switch-thumb,
+:root.dark .delivery-settings__switch i::after {
+  background: var(--app-text) !important;
+  box-shadow: var(--app-shadow-soft) !important;
+}
+
+:root.dark .ad__switch input:checked + .ad__switch-track,
+:root.dark .ar__switch input:checked + .ar__switch-track,
+:root.dark .notify-switch input:checked ~ .notify-switch__track,
+:root.dark .settings__switch input:checked + .settings__switch-track,
+:root.dark .delivery-settings__switch input:checked + i {
+  background: var(--app-success) !important;
+}
+
+:root.dark .ol__runtime-log {
+  background: color-mix(in srgb, var(--app-text) 3%, transparent) !important;
+  border-color: var(--app-border) !important;
+}
+
+:root.dark .ol__runtime-log-header {
+  background: var(--app-surface-strong) !important;
+  border-color: var(--app-border) !important;
+}
+
+:root.dark .ol__runtime-log-box {
+  background: #0b0f14 !important;
+  color: #d7e0ea !important;
+}
+
+:root.dark .table__th,
+:root.dark .ol__logs-table th,
+:root.dark .ad__records-table th {
+  background: var(--app-bg-muted) !important;
+  border-color: var(--app-border) !important;
+  color: var(--app-text-soft) !important;
+}
+
+:root.dark .table__td,
+:root.dark .ol__logs-table td,
+:root.dark .ad__records-table td {
+  border-color: var(--app-border) !important;
+  color: var(--app-text-muted) !important;
+}
+
+:root.dark .ad__page-btn:hover,
+:root.dark .ar__records-page-btn:hover,
+:root.dark .orders__page-btn:hover,
+:root.dark .ol__page-btn:hover {
+  background: color-mix(in srgb, var(--app-text) 7%, transparent) !important;
+  border-color: var(--app-border-strong) !important;
+}

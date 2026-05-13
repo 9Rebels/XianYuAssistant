@@ -1,0 +1,717 @@
+/* 全局主题样式 - 参考demo.html风格 */
+
+/* Element Plus 组件样式覆盖 */
+:root {
+  --el-color-primary: var(--app-primary);
+  --el-color-primary-light-3: #4a4a4a;
+  --el-color-primary-light-5: #6a6a6a;
+  --el-color-primary-light-7: #8a8a8a;
+  --el-color-primary-light-8: #aaaaaa;
+  --el-color-primary-light-9: #d4d4d4;
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 6px;
+  --el-bg-color: var(--app-surface-strong);
+  --el-bg-color-overlay: var(--app-surface-strong);
+  --el-fill-color-blank: var(--app-surface-strong);
+  --el-text-color-primary: var(--app-text);
+  --el-text-color-regular: var(--app-text-muted);
+  --el-text-color-secondary: var(--app-text-soft);
+  --el-border-color: var(--app-border);
+  --el-border-color-light: var(--app-border);
+  --el-border-color-lighter: var(--app-border);
+  --el-mask-color: var(--app-overlay);
+}
+
+/* 卡片样式 */
+.el-card {
+  border: 1px solid var(--app-border);
+  border-radius: 12px;
+  box-shadow: none;
+  transition: all 0.2s;
+  background: var(--app-surface-strong);
+}
+
+.el-card:hover {
+  box-shadow: var(--app-shadow-soft);
+}
+
+.el-card__header {
+  border-bottom: 1px solid var(--app-border);
+  padding: 20px 24px;
+  background: var(--app-surface-strong);
+}
+
+.el-card__body {
+  padding: 24px;
+}
+
+/* 按钮样式 */
+.el-button {
+  border-radius: 8px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.el-button--primary {
+  background: var(--app-primary);
+  border-color: var(--app-primary);
+  color: var(--app-surface-strong);
+}
+
+.el-button--primary:hover,
+.el-button--primary:focus {
+  background: var(--app-primary-hover);
+  border-color: var(--app-primary-hover);
+}
+
+.el-button--default {
+  background: var(--app-surface-strong);
+  border-color: var(--app-border);
+  color: var(--app-text);
+}
+
+.el-button--default:hover,
+.el-button--default:focus {
+  background: var(--app-surface-hover);
+  border-color: var(--app-border-strong);
+  color: var(--app-text);
+}
+
+/* 表格样式 */
+.el-table {
+  border-radius: 12px;
+  overflow: hidden;
+  --el-table-tr-bg-color: var(--app-surface-strong);
+  --el-table-header-bg-color: var(--app-bg-muted);
+  --el-table-border-color: var(--app-border);
+  --el-table-row-hover-bg-color: color-mix(in srgb, var(--app-surface-hover) 88%, transparent);
+}
+
+.el-table th.el-table__cell {
+  background: var(--app-bg-muted);
+  color: var(--app-text-muted);
+  font-weight: 600;
+  font-size: 14px;
+  border-bottom: 2px solid var(--app-border);
+}
+
+.el-table tr:hover > td {
+  background: color-mix(in srgb, var(--app-surface-hover) 88%, transparent) !important;
+}
+
+.el-table td.el-table__cell {
+  border-bottom: 1px solid var(--app-border);
+}
+
+/* 输入框样式 */
+.el-input__wrapper {
+  border-radius: 8px;
+  border: 1px solid var(--app-border);
+  box-shadow: none;
+  transition: all 0.2s;
+  background: var(--app-surface-strong);
+}
+
+.el-input__wrapper:hover {
+  border-color: var(--app-border-strong);
+}
+
+.el-input__wrapper.is-focus {
+  border-color: var(--app-primary);
+  box-shadow: 0 0 0 1px var(--app-primary) inset;
+}
+
+.el-select .el-input__wrapper {
+  border-radius: 8px;
+}
+
+/* 标签样式 */
+.el-tag {
+  border-radius: 12px;
+  border: none;
+  font-weight: 500;
+}
+
+.el-tag--success {
+  background: color-mix(in srgb, var(--app-success) 18%, transparent);
+  color: var(--app-success);
+}
+
+.el-tag--danger {
+  background: color-mix(in srgb, var(--app-danger) 18%, transparent);
+  color: var(--app-danger);
+}
+
+.el-tag--warning {
+  background: color-mix(in srgb, var(--app-warning) 18%, transparent);
+  color: var(--app-warning);
+}
+
+.el-tag--info {
+  background: color-mix(in srgb, var(--app-accent) 18%, transparent);
+  color: var(--app-accent);
+}
+
+/* 分页样式 */
+.el-pagination {
+  font-weight: 500;
+}
+
+.el-pagination button {
+  border-radius: 8px;
+  background: var(--app-surface-strong);
+  border: 1px solid var(--app-border);
+}
+
+.el-pagination button:hover {
+  background: var(--app-surface-hover);
+  border-color: var(--app-border-strong);
+}
+
+.el-pager li {
+  border-radius: 8px;
+  background: var(--app-surface-strong);
+  border: 1px solid var(--app-border);
+  margin: 0 4px;
+}
+
+.el-pager li:hover {
+  background: var(--app-surface-hover);
+  border-color: var(--app-border-strong);
+}
+
+.el-pager li.is-active {
+  background: var(--app-primary);
+  border-color: var(--app-primary);
+  color: var(--app-surface-strong);
+}
+
+/* 对话框样式 */
+.el-dialog {
+  border-radius: 12px;
+  border: 1px solid var(--app-border);
+  background: var(--app-surface-strong);
+}
+
+.el-dialog__header {
+  border-bottom: 1px solid var(--app-border);
+  padding: 20px 24px;
+}
+
+.el-dialog__body {
+  padding: 24px;
+}
+
+.el-dialog__footer {
+  border-top: 1px solid var(--app-border);
+  padding: 20px 24px;
+}
+
+/* 开关样式 */
+.el-switch.is-checked .el-switch__core {
+  background-color: var(--app-primary);
+  border-color: var(--app-primary);
+}
+
+/* 空状态样式 */
+.el-empty {
+  padding: 40px 0;
+}
+
+.el-empty__description {
+  color: var(--app-text-muted);
+}
+
+/* 加载样式 */
+.el-loading-mask {
+  background-color: color-mix(in srgb, var(--app-bg) 72%, transparent);
+}
+
+/* 消息提示样式 */
+.el-message {
+  border-radius: 8px;
+  border: 1px solid var(--app-border);
+  box-shadow: var(--app-shadow-soft);
+  background: var(--app-surface-strong);
+}
+
+.el-message--success {
+  background: color-mix(in srgb, var(--app-success) 15%, var(--app-surface-strong));
+  border-color: var(--app-success);
+}
+
+.el-message--error {
+  background: color-mix(in srgb, var(--app-danger) 15%, var(--app-surface-strong));
+  border-color: var(--app-danger);
+}
+
+.el-message--warning {
+  background: color-mix(in srgb, var(--app-warning) 15%, var(--app-surface-strong));
+  border-color: var(--app-warning);
+}
+
+.el-message--info {
+  background: color-mix(in srgb, var(--app-accent) 15%, var(--app-surface-strong));
+  border-color: var(--app-accent);
+}
+
+.dark {
+  --el-color-primary: var(--app-accent);
+  --el-color-primary-light-3: #7ab9ff;
+  --el-color-primary-light-5: #93c7ff;
+  --el-color-primary-light-7: #afd7ff;
+  --el-color-primary-light-8: #c6e4ff;
+  --el-color-primary-light-9: #dff0ff;
+  --el-color-primary-dark-2: #4a97ef;
+  --el-fill-color: #222935;
+  --el-fill-color-light: #252d3a;
+  --el-fill-color-lighter: #2a3341;
+  --el-fill-color-dark: #1b222d;
+  --el-fill-color-darker: #161c24;
+  --el-fill-color-blank: var(--app-surface-strong);
+  --el-bg-color-page: var(--app-bg);
+  --el-bg-color-overlay: var(--app-surface-strong);
+  --el-text-color-primary: var(--app-text);
+  --el-text-color-regular: var(--app-text-muted);
+  --el-text-color-secondary: var(--app-text-soft);
+  --el-border-color-hover: var(--app-border-strong);
+  --el-box-shadow-light: var(--app-shadow-soft);
+}
+
+.dark .el-input__wrapper,
+.dark .el-textarea__inner,
+.dark .el-select__wrapper,
+.dark .el-date-editor.el-input,
+.dark .el-date-editor.el-input__wrapper {
+  background: var(--app-surface-strong);
+}
+
+.dark .el-menu {
+  background: transparent;
+}
+
+.dark .el-menu-item,
+.dark .el-sub-menu__title {
+  color: var(--app-text-muted);
+}
+
+.dark .el-menu-item:hover,
+.dark .el-sub-menu__title:hover {
+  background: color-mix(in srgb, var(--app-surface-hover) 85%, transparent) !important;
+  color: var(--app-text);
+}
+
+.dark .el-menu-item.is-active {
+  background: var(--app-accent) !important;
+  color: #ffffff !important;
+}
+
+.dark .el-overlay-dialog,
+.dark .el-overlay {
+  background: transparent;
+}
+
+.dark .dashboard,
+.dark .login-page {
+  color: var(--app-text);
+}
+
+:root.dark .accounts,
+:root.dark .goods,
+:root.dark .messages,
+:root.dark .orders,
+:root.dark .ar,
+:root.dark .ol {
+  --d-bg: transparent;
+  --d-surface: var(--app-surface);
+  --d-surface-hover: var(--app-surface-hover);
+  --d-surface-solid: var(--app-surface-strong);
+  --d-border: var(--app-border);
+  --d-border-strong: var(--app-border-strong);
+  --d-shadow-sm: var(--app-shadow-soft);
+  --d-shadow-md: var(--app-shadow-strong);
+  --d-text-primary: var(--app-text);
+  --d-text-secondary: var(--app-text-muted);
+  --d-text-tertiary: var(--app-text-soft);
+  --d-accent: var(--app-accent);
+  --d-danger: var(--app-danger);
+  --d-success: var(--app-success);
+  --d-warning: var(--app-warning);
+  --d-price: var(--app-danger);
+}
+
+:root.dark .notify-page {
+  --notify-surface: var(--app-surface);
+  --notify-surface-strong: var(--app-surface-strong);
+  --notify-border: var(--app-border);
+  --notify-border-strong: var(--app-border-strong);
+  --notify-text: var(--app-text);
+  --notify-muted: var(--app-text-muted);
+  --notify-soft: var(--app-text-soft);
+  --notify-accent: var(--app-accent);
+  --notify-success: var(--app-success);
+  --notify-warning: var(--app-warning);
+  --notify-danger: var(--app-danger);
+}
+
+:root.dark .card-list,
+:root.dark .table-container,
+:root.dark .sidebar {
+  --c-bg: transparent;
+  --c-surface: var(--app-surface-strong);
+  --c-border: var(--app-border);
+  --c-border-strong: var(--app-border-strong);
+  --c-text-1: var(--app-text);
+  --c-text-2: var(--app-text-muted);
+  --c-text-3: var(--app-text-soft);
+  --c-accent: var(--app-accent);
+  --c-danger: var(--app-danger);
+  --c-success: var(--app-success);
+  --c-warning: var(--app-warning);
+}
+
+:root.dark .detail-overlay,
+:root.dark .detail-panel,
+:root.dark .detail-mobile,
+:root.dark .settings-overlay {
+  --d-bg: transparent;
+  --d-surface: var(--app-surface);
+  --d-surface-hover: var(--app-surface-hover);
+  --d-border: var(--app-border);
+  --d-border-strong: var(--app-border-strong);
+  --d-text-1: var(--app-text);
+  --d-text-2: var(--app-text-muted);
+  --d-text-3: var(--app-text-soft);
+  --d-accent: var(--app-accent);
+  --d-danger: var(--app-danger);
+  --d-success: var(--app-success);
+  --d-price: var(--app-danger);
+}
+
+:root.dark .accounts__title-icon,
+:root.dark .goods__title-icon,
+:root.dark .messages__title-icon,
+:root.dark .orders__title-icon,
+:root.dark .ar__title-icon,
+:root.dark .ol__title-icon,
+:root.dark .ad__title-icon {
+  background: color-mix(in srgb, var(--app-text) 8%, transparent);
+  color: var(--app-text);
+}
+
+:root.dark .orders__tabs {
+  background: color-mix(in srgb, var(--app-text) 8%, transparent);
+}
+
+:root.dark .orders__tab--active {
+  background: var(--app-surface-strong);
+  color: var(--app-text);
+  box-shadow: var(--app-shadow-soft);
+}
+
+:root.dark input:not([type='checkbox']):not([type='radio']),
+:root.dark textarea,
+:root.dark select {
+  color: var(--app-text);
+  background-color: var(--app-surface-strong);
+  border-color: var(--app-border);
+}
+
+:root.dark input::placeholder,
+:root.dark textarea::placeholder {
+  color: var(--app-text-soft);
+}
+
+:root.dark .modal.modal,
+:root.dark .ios-sheet.ios-sheet,
+:root.dark .dialog.dialog,
+:root.dark .drawer.drawer {
+  background: var(--app-surface-strong);
+  color: var(--app-text);
+  border-color: var(--app-border);
+}
+
+:root.dark .modal-header,
+:root.dark .modal-footer,
+:root.dark .ios-sheet-header,
+:root.dark .ios-sheet-footer,
+:root.dark .dialog-header,
+:root.dark .dialog-footer {
+  background: var(--app-surface-strong);
+  border-color: var(--app-border);
+  color: var(--app-text);
+}
+
+:root.dark .modal-title,
+:root.dark .modal-body,
+:root.dark .ios-sheet-title,
+:root.dark .delete-title,
+:root.dark .settings-dialog__title,
+:root.dark .detail-panel__title {
+  color: var(--app-text);
+}
+
+:root.dark .modal-desc,
+:root.dark .delete-desc,
+:root.dark .delete-list,
+:root.dark .ios-sheet-content,
+:root.dark .settings-dialog__desc,
+:root.dark .detail-panel__meta {
+  color: var(--app-text-muted);
+}
+
+:root.dark .accounts__content,
+:root.dark .goods__content,
+:root.dark .messages__content,
+:root.dark .orders__content,
+:root.dark .ar__content,
+:root.dark .ol__content,
+:root.dark .goods__dialog,
+:root.dark .goods__config-menu,
+:root.dark .messages__dialog,
+:root.dark .ar__dialog,
+:root.dark .ar__rule-dialog,
+:root.dark .ar__records-dialog,
+:root.dark .ar__detail-dialog,
+:root.dark .ol__dialog,
+:root.dark .orders__dialog,
+:root.dark .goods__filter-sheet,
+:root.dark .orders__filter-sheet,
+:root.dark .mobile-messages,
+:root.dark .publish-dialog,
+:root.dark .publish-cascader,
+:root.dark .publish-poi-panel,
+:root.dark .detail-panel,
+:root.dark .detail-mobile,
+:root.dark .context-content {
+  background: var(--app-surface-strong);
+  color: var(--app-text);
+  border-color: var(--app-border);
+}
+
+:root.dark .mobile-messages__toolbar,
+:root.dark .mobile-messages__interval-row,
+:root.dark .publish-cascader__mobile-head,
+:root.dark .publish-dialog__header,
+:root.dark .publish-dialog__footer,
+:root.dark .detail-panel__header,
+:root.dark .detail-mobile__header,
+:root.dark .goods__config-menu-header,
+:root.dark .ar__dialog-header,
+:root.dark .ar__rule-dialog-header,
+:root.dark .ar__records-dialog-header,
+:root.dark .ar__detail-dialog-header,
+:root.dark .ol__dialog-header,
+:root.dark .orders__dialog-header,
+:root.dark .sidebar__header {
+  background: var(--app-surface-strong);
+  color: var(--app-text);
+  border-color: var(--app-border);
+}
+
+:root.dark .mobile-messages__title,
+:root.dark .publish-dialog__title,
+:root.dark .publish-section__head strong,
+:root.dark .publish-label,
+:root.dark .publish-price-wrap,
+:root.dark .publish-money-input em,
+:root.dark .publish-shipping-options,
+:root.dark .publish-postage-label,
+:root.dark .publish-cascader__mobile-head span,
+:root.dark .publish-poi-panel__head strong,
+:root.dark .publish-poi-list button,
+:root.dark .publish-poi-list strong,
+:root.dark .dialog-title,
+:root.dark .message-sender,
+:root.dark .message-text,
+:root.dark .context-input__img-btn:hover,
+:root.dark .goods__config-menu-title,
+:root.dark .goods__config-menu-item,
+:root.dark .orders__tab--active,
+:root.dark .modal-input,
+:root.dark .ios-sheet-title,
+:root.dark .sidebar__title {
+  color: var(--app-text);
+}
+
+:root.dark .mobile-messages__count,
+:root.dark .publish-dialog__subtitle,
+:root.dark .publish-help,
+:root.dark .publish-section__head span,
+:root.dark .publish-poi-list span,
+:root.dark .publish-poi-empty,
+:root.dark .dialog-goods,
+:root.dark .loading-more,
+:root.dark .message-time,
+:root.dark .system-text,
+:root.dark .empty-context__icon,
+:root.dark .empty-context__text,
+:root.dark .sidebar__id,
+:root.dark .sidebar__loading,
+:root.dark .sidebar__end,
+:root.dark .sidebar__empty-icon,
+:root.dark .sidebar__empty-text {
+  color: var(--app-text-muted);
+}
+
+:root.dark .mobile-messages__refresh,
+:root.dark .mobile-messages__auto,
+:root.dark .publish-input,
+:root.dark .publish-textarea,
+:root.dark .publish-picker__input,
+:root.dark .publish-icon-btn,
+:root.dark .publish-spec-value button,
+:root.dark .publish-add-value,
+:root.dark .publish-cascader__mobile-head button,
+:root.dark .publish-poi__button,
+:root.dark .publish-btn--primary:disabled,
+:root.dark .publish-add-spec:disabled,
+:root.dark .context-input__img-btn,
+:root.dark .goods__config-menu-item,
+:root.dark .sidebar__item,
+:root.dark .modal-input,
+:root.dark .ios-sheet-close {
+  background: var(--app-surface);
+  color: var(--app-text);
+  border-color: var(--app-border);
+}
+
+:root.dark .mobile-messages__refresh:active:not(:disabled),
+:root.dark .mobile-messages__auto:hover,
+:root.dark .publish-icon-btn:hover,
+:root.dark .publish-spec-value button:hover,
+:root.dark .publish-add-value:hover,
+:root.dark .publish-cascader__col button.active,
+:root.dark .publish-cascader__col button:hover,
+:root.dark .publish-poi-list button:hover,
+:root.dark .sidebar__item:hover,
+:root.dark .msg-card:nth-child(even),
+:root.dark .table__th,
+:root.dark .goods__table-wrap .table__th,
+:root.dark .table-container .table__th {
+  background: var(--app-bg-muted);
+}
+
+:root.dark .mobile-messages__auto--on,
+:root.dark .publish-btn--primary,
+:root.dark .publish-poi-panel__actions button,
+:root.dark .publish-add-spec,
+:root.dark .publish-switch input:checked + span,
+:root.dark .status-pending,
+:root.dark .status-scanned,
+:root.dark .avatar--user {
+  background: var(--app-accent);
+  border-color: var(--app-accent);
+  color: #ffffff;
+}
+
+:root.dark .status-confirmed,
+:root.dark .avatar,
+:root.dark .context-input__img-btn--active {
+  background: color-mix(in srgb, var(--app-success) 18%, var(--app-surface));
+  border-color: color-mix(in srgb, var(--app-success) 36%, var(--app-border));
+  color: var(--app-success);
+}
+
+:root.dark .status-expired,
+:root.dark .dialog-count {
+  background: color-mix(in srgb, var(--app-danger) 18%, var(--app-surface));
+  border-color: color-mix(in srgb, var(--app-danger) 36%, var(--app-border));
+  color: var(--app-danger);
+}
+
+:root.dark .message-type,
+:root.dark .msg-card__btn--context,
+:root.dark .table__action--context,
+:root.dark .detail-info__action--price {
+  background: color-mix(in srgb, var(--app-accent) 14%, var(--app-surface));
+  border-color: color-mix(in srgb, var(--app-accent) 28%, var(--app-border));
+  color: var(--app-accent);
+}
+
+:root.dark .msg-card,
+:root.dark .msg-card__btn--reply,
+:root.dark .table__action--reply,
+:root.dark .detail-info__action--stock,
+:root.dark .publish-spec-group,
+:root.dark .publish-sku-table,
+:root.dark .publish-poi-list button,
+:root.dark .message-text,
+:root.dark .context-input .el-textarea__inner,
+:root.dark .qr-code,
+:root.dark .goods__config-menu-item,
+:root.dark .goods__filter-sheet,
+:root.dark .orders__filter-sheet {
+  border-color: var(--app-border);
+}
+
+:root.dark .msg-card,
+:root.dark .table-container,
+:root.dark .table__td,
+:root.dark .msg-card__btn--reply,
+:root.dark .table__action--reply,
+:root.dark .detail-info__action--stock,
+:root.dark .detail-info__desc-section,
+:root.dark .detail-gallery__main,
+:root.dark .detail-gallery__thumb,
+:root.dark .publish-spec-group,
+:root.dark .publish-sku-table__head,
+:root.dark .publish-cascader__col button,
+:root.dark .publish-poi-list button,
+:root.dark .message-text,
+:root.dark .context-input .el-textarea__inner,
+:root.dark .context-input__img-btn--active,
+:root.dark .qr-skeleton,
+:root.dark .ios-sheet-btn--cancel {
+  background: var(--app-surface);
+  color: var(--app-text);
+}
+
+:root.dark .msg-card:active,
+:root.dark .table__tr:hover .table__td,
+:root.dark .publish-spec-group,
+:root.dark .detail-panel__close:hover,
+:root.dark .ios-sheet-close:active,
+:root.dark .mobile-messages__refresh:hover {
+  background: color-mix(in srgb, var(--app-surface-hover) 88%, transparent);
+}
+
+:root.dark .msg-card__id,
+:root.dark .table__th,
+:root.dark .time-text,
+:root.dark .sender-text,
+:root.dark .goods-id-text,
+:root.dark .publish-section--disabled,
+:root.dark .publish-row--disabled .publish-label,
+:root.dark .publish-disabled,
+:root.dark .detail-gallery__placeholder,
+:root.dark .detail-info__id,
+:root.dark .detail-info__config-value,
+:root.dark .detail-info__time-item,
+:root.dark .session-id {
+  color: var(--app-text-soft);
+}
+
+:root.dark .modal-input::placeholder,
+:root.dark .publish-input::placeholder,
+:root.dark .publish-textarea::placeholder,
+:root.dark .context-input .el-textarea__inner::placeholder {
+  color: var(--app-text-soft);
+}
+
+:root.dark .publish-cascader__col,
+:root.dark .publish-sku-row,
+:root.dark .publish-poi-panel__head,
+:root.dark .publish-poi-panel__actions,
+:root.dark .publish-dialog__header,
+:root.dark .publish-cascader__mobile-head,
+:root.dark .mobile-messages__toolbar,
+:root.dark .mobile-messages__interval-row,
+:root.dark .msg-card,
+:root.dark .table__th,
+:root.dark .table__tr:not(:last-child) .table__td,
+:root.dark .goods__config-menu-item,
+:root.dark .detail-info__config-item:not(:last-child),
+:root.dark .detail-info__actions {
+  border-color: var(--app-border);
+}

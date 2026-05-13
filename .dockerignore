@@ -1,0 +1,76 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE
+.idea
+.vscode
+*.iml
+*.ipr
+*.iws
+.codeartsdoer
+.claude
+
+# Build outputs
+target/
+dist/
+vue-code/dist/
+vue-code/node_modules/
+node_modules/
+src/main/resources/static/assets/
+src/main/resources/static/index.html
+
+# Logs
+*.log
+logs/
+target/*.log
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Data
+dbdata/
+data/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+vectorstore.json
+
+# Browser profile & PoC local artifacts
+browser_data/
+poc-*.txt
+poc-*.log
+
+# Documentation
+docs/
+*.md
+!README.md
+README_INTEGRATION.md
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+*.bak
+*.old
+*.original
+
+# Runtime dumps and caches
+.mvn/wrapper/MavenWrapperDownloader.java
+vue-code/.vite/
+vue-code/.cache/
+vue-code/coverage/
+coverage/
+
+# Demo (已删除)
+demo/

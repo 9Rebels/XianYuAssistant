@@ -1,0 +1,24 @@
+FROM ghcr.io/9rebels/xianyuassistant-pro:latest
+
+ARG APK_PROXY=
+ENV http_proxy=${APK_PROXY}
+ENV https_proxy=${APK_PROXY}
+
+RUN apk add --no-cache \
+    chromium \
+    ffmpeg \
+    nodejs \
+    nss \
+    freetype \
+    harfbuzz \
+    ca-certificates \
+    ttf-freefont
+
+ENV http_proxy=
+ENV https_proxy=
+ENV TZ=Asia/Shanghai
+ENV CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV PLAYWRIGHT_NODEJS_PATH=/usr/bin/node
+
+COPY target/XianYuAssistant-1.1.4.jar /app/app.jar
