@@ -150,7 +150,7 @@ public class XianyuSliderStealthService {
             captureQrCodeScreenshot(page, accountId);
             notifyManualVerification(accountId, "扫码/二维码验证", "自动滑块失败，请在前端弹窗中扫码或完成页面验证");
             // 轮询等待验证完成（最多 120 秒）
-            boolean verified = waitForManualVerification(page, 120);
+            boolean verified = waitForManualVerification(context, page, accountId, 120);
             if (!verified) {
                 log.warn("[SliderRecovery] 等待人工验证超时: accountId={}", accountId);
                 return null;
@@ -222,29 +222,60 @@ public class XianyuSliderStealthService {
         sseEventBus.broadcast("notification", payload);
     }
 
-    private boolean waitForManualVerification(Page page, int maxWaitSeconds) {
+    private boolean waitForManualVerification(BrowserContext context, Page page, Long accountId, int maxWaitSeconds) {
         long deadline = System.currentTimeMillis() + maxWaitSeconds * 1000L;
+        // 真实登录态判定：BrowserContext 中必须出现全部核心登录 Cookie（REQUIRED_FIELDS）。
+        // URL 离开 captcha/punish 只代表前端 SPA 跳走，不能等价于扫码完成，11:14 误判 bug 由此而来。
+        List<String> required = CaptchaCookieMergeService.REQUIRED_FIELDS;
+        long pollIntervalMs = 3000L;
+        long lastMissingLogMs = 0L;
         while (System.currentTimeMillis() < deadline) {
             try {
-                page.waitForTimeout(3000);
-                if (page.isClosed()) return false;
-                // 检查页面是否已脱离验证态
-                SliderPageInspector.PageState state = snapshotPageState(page);
-                if (sliderPageInspector.isVerificationSuccess(state)) {
+                page.waitForTimeout(pollIntervalMs);
+                if (page.isClosed()) {
+                    log.warn("[SliderRecovery] 等待人工验证期间页面被关闭: accountId={}", accountId);
+                    return false;
+                }
+                Map<String, String> cookies = snapshotContextCookies(context);
+                List<String> missing = new ArrayList<>();
+                for (String name : required) {
+                    String v = cookies.get(name);
+                    if (v == null || v.isBlank()) {
+                        missing.add(name);
+                    }
+                }
+                if (missing.isEmpty()) {
+                    log.info("[SliderRecovery] 人工验证完成（检测到全部核心登录 Cookie）: accountId={}", accountId);
                     return true;
                 }
-                // 检查 URL 是否已跳转离开验证页
-                String currentUrl = page.url();
-                if (currentUrl != null && !currentUrl.contains("captcha") &&
-                        !currentUrl.contains("punish") && !currentUrl.contains("x5secdata") &&
-                        (currentUrl.contains("goofish.com/im") || currentUrl.contains("goofish.com/"))) {
-                    return true;
+                long now = System.currentTimeMillis();
+                if (now - lastMissingLogMs > 15000L) {
+                    long remaining = (deadline - now) / 1000L;
+                    log.info("[SliderRecovery] 等待人工扫码完成: accountId={}, 缺失={}, 剩余{}s",
+                            accountId, missing, remaining);
+                    lastMissingLogMs = now;
                 }
             } catch (Exception e) {
+                log.warn("[SliderRecovery] 等待人工验证轮询异常: accountId={}, error={}", accountId, e.getMessage());
                 return false;
             }
         }
+        log.warn("[SliderRecovery] 等待人工验证超时（{}s 内未拿到核心登录 Cookie）: accountId={}",
+                maxWaitSeconds, accountId);
         return false;
+    }
+
+    private Map<String, String> snapshotContextCookies(BrowserContext context) {
+        Map<String, String> result = new LinkedHashMap<>();
+        try {
+            for (Cookie cookie : context.cookies()) {
+                if (cookie.name == null) continue;
+                result.putIfAbsent(cookie.name, cookie.value == null ? "" : cookie.value);
+            }
+        } catch (Exception e) {
+            log.debug("[SliderRecovery] 读取 context cookies 失败: {}", e.getMessage());
+        }
+        return result;
     }
 
     private SliderVerificationResult collectSuccessCookies(BrowserContext context,

@@ -26,7 +26,7 @@ public class CaptchaCookieMergeService {
             "havana_lgc2_77",
             "_tb_token_"
     );
-    private static final List<String> REQUIRED_FIELDS = List.of(
+    static final List<String> REQUIRED_FIELDS = List.of(
             "unb",
             "sgcookie",
             "cookie2",
