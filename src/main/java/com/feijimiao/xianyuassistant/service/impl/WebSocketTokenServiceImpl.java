@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.feijimiao.xianyuassistant.entity.XianyuAccount;
 import com.feijimiao.xianyuassistant.entity.XianyuCookie;
+import com.feijimiao.xianyuassistant.event.account.AccountRemovedEvent;
 import com.feijimiao.xianyuassistant.exception.CaptchaRequiredException;
 import com.feijimiao.xianyuassistant.mapper.XianyuCookieMapper;
 
@@ -20,6 +21,7 @@ import com.feijimiao.xianyuassistant.utils.XianyuSignUtils;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import java.net.URLEncoder;
@@ -112,6 +114,18 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
     private final Map<Long, Long> captchaNotifyTimestamps = new ConcurrentHashMap<>();
 
     /**
+     * 记录验证码恢复后等待 Token 获取成功再发送成功通知的账号
+     * Key: accountId, Value: timestamp
+     */
+    private final Map<Long, Long> pendingCaptchaSuccessNotifications = new ConcurrentHashMap<>();
+
+    /**
+     * 记录最近一次人机验证恢复成功通知时间，避免同一账号短时间重复通知
+     * Key: accountId, Value: timestamp
+     */
+    private final Map<Long, Long> captchaSuccessNotifyTimestamps = new ConcurrentHashMap<>();
+
+    /**
      * 验证URL有效期（5分钟）
      */
     private static final long CAPTCHA_TIMEOUT = 5 * 60 * 1000;
@@ -120,6 +134,11 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
      * 人机验证通知最小间隔（5分钟）
      */
     private static final long CAPTCHA_NOTIFY_INTERVAL = 5 * 60 * 1000;
+
+    /**
+     * 人机验证恢复成功通知最小间隔（30分钟）
+     */
+    private static final long CAPTCHA_SUCCESS_NOTIFY_INTERVAL = 30 * 60 * 1000;
 
     private static final String MANUAL_COOKIE_UPDATE_MESSAGE = CaptchaService.AUTO_SLIDER_FAILED_MESSAGE;
 
@@ -176,6 +195,25 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
      */
     private Object getTokenLock(Long accountId) {
         return tokenLocks.computeIfAbsent(accountId, k -> new Object());
+    }
+
+    /**
+     * 账号删除事件处理：清理该账号在 Token 服务内的所有内存状态，防止泄漏
+     */
+    @EventListener
+    public void onAccountRemoved(AccountRemovedEvent event) {
+        Long accountId = event.getAccountId();
+        try {
+            log.info("【账号{}】收到账号删除事件，清理 Token 服务内存状态", accountId);
+            tokenLocks.remove(accountId);
+            pendingCaptchaAccounts.remove(accountId);
+            captchaTimestamps.remove(accountId);
+            captchaNotifyTimestamps.remove(accountId);
+            pendingCaptchaSuccessNotifications.remove(accountId);
+            captchaSuccessNotifyTimestamps.remove(accountId);
+        } catch (Exception e) {
+            log.warn("【账号{}】Token 服务账号删除事件处理异常: {}", accountId, e.getMessage(), e);
+        }
     }
 
     @Override
@@ -787,7 +825,7 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
             }
             clearCaptchaWaitState(accountId);
             updateAccountStatusToNormal(accountId);
-            notifyCaptchaSuccess(accountId, "人机验证恢复成功", "Cookie 已自动写回，可继续获取 WebSocket Token。");
+            markCaptchaSuccessNotifyPending(accountId);
             return true;
         }
         log.warn("【账号{}】{}，不再创建截图/CDP人工会话: message={}",
@@ -1190,6 +1228,7 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
                 log.info("【账号{}】Token已保存到数据库，过期时间: {}", accountId,
                         new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
                                 .format(new java.util.Date(expireTime)));
+                notifyCaptchaSuccessIfPending(accountId);
             } else {
                 log.warn("【账号{}】Token保存失败，未找到对应的Cookie记录", accountId);
             }
@@ -1201,6 +1240,7 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
     private void markCaptchaWaiting(Long accountId, String captchaUrl) {
         pendingCaptchaAccounts.put(accountId, captchaUrl);
         captchaTimestamps.put(accountId, System.currentTimeMillis());
+        pendingCaptchaSuccessNotifications.remove(accountId);
         updateAccountStatusToCaptchaRequired(accountId);
     }
 
@@ -1208,6 +1248,20 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
         pendingCaptchaAccounts.remove(accountId);
         captchaTimestamps.remove(accountId);
         captchaNotifyTimestamps.remove(accountId);
+    }
+
+    private void markCaptchaSuccessNotifyPending(Long accountId) {
+        pendingCaptchaSuccessNotifications.put(accountId, System.currentTimeMillis());
+    }
+
+    private void notifyCaptchaSuccessIfPending(Long accountId) {
+        if (pendingCaptchaSuccessNotifications.remove(accountId) == null) {
+            return;
+        }
+        if (!tryAcquireCaptchaSuccessNotifySlot(accountId)) {
+            return;
+        }
+        notifyCaptchaSuccess(accountId, "人机验证恢复成功", "Cookie 已自动写回，WebSocket Token 已恢复。");
     }
 
     private void notifyCaptchaRequiredIfNeeded(Long accountId, String reason, String detail) {
@@ -1239,6 +1293,17 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
             return false;
         }
         captchaNotifyTimestamps.put(accountId, now);
+        return true;
+    }
+
+    private boolean tryAcquireCaptchaSuccessNotifySlot(Long accountId) {
+        long now = System.currentTimeMillis();
+        Long lastNotifyTime = captchaSuccessNotifyTimestamps.get(accountId);
+        if (lastNotifyTime != null && now - lastNotifyTime < CAPTCHA_SUCCESS_NOTIFY_INTERVAL) {
+            log.info("【账号{}】人机验证恢复成功通知冷却中，跳过重复通知", accountId);
+            return false;
+        }
+        captchaSuccessNotifyTimestamps.put(accountId, now);
         return true;
     }
 

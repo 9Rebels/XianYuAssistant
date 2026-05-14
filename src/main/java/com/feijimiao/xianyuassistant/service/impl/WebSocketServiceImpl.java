@@ -2,6 +2,7 @@ package com.feijimiao.xianyuassistant.service.impl;
 
 import com.feijimiao.xianyuassistant.config.WebSocketConfig;
 import com.feijimiao.xianyuassistant.constants.OperationConstants;
+import com.feijimiao.xianyuassistant.event.account.AccountRemovedEvent;
 import com.feijimiao.xianyuassistant.service.AccountService;
 import com.feijimiao.xianyuassistant.service.NotificationService;
 import com.feijimiao.xianyuassistant.service.OperationLogService;
@@ -14,13 +15,16 @@ import com.feijimiao.xianyuassistant.websocket.XianyuWebSocketClient;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * WebSocket服务实现类
@@ -99,6 +103,10 @@ public class WebSocketServiceImpl implements WebSocketService {
     
     // 重连任务（防止重复重连）
     private final Map<Long, Future<?>> reconnectTasks = new ConcurrentHashMap<>();
+
+    // 重连任务代次：每次调用 scheduleReconnect 都递增，回调内通过比对此代次决定是否仍是"当前任务"
+    // 修复"已有延迟任务在执行就 return 导致新原因被吞掉"的丢任务问题
+    private final Map<Long, AtomicLong> reconnectGenerations = new ConcurrentHashMap<>();
     
     // 重连执行器（参考Python的异步重连）
     private final ScheduledExecutorService reconnectExecutor = Executors.newScheduledThreadPool(2);
@@ -466,11 +474,12 @@ public class WebSocketServiceImpl implements WebSocketService {
     @Override
     public void stopAllWebSockets() {
         log.info("停止所有WebSocket连接");
-        
-        for (Long accountId : webSocketClients.keySet()) {
+
+        // 快照遍历，避免边遍历边修改（stopWebSocket 内部会 webSocketClients.remove）
+        for (Long accountId : new ArrayList<>(webSocketClients.keySet())) {
             stopWebSocket(accountId);
         }
-        
+
         // 关闭心跳调度器
         heartbeatScheduler.shutdown();
     }
@@ -724,12 +733,13 @@ public class WebSocketServiceImpl implements WebSocketService {
     /**
      * 调度重连任务
      * 参考Python的main()方法中while True无限重连循环
-     * 
+     *
      * 关键改进（对齐Python逻辑）：
-     * 1. 防止重复重连：同一账号同时只有一个重连任务
+     * 1. 新原因（401/心跳超时/Token 刷新）来临时取消旧延迟任务，按新延迟重新调度
+     *    通过代次（generation）让"已开始执行的旧任务"自检退出，避免双连
      * 2. 指数退避：重连失败后延迟逐渐增加
      * 3. 重连成功后重置计数
-     * 
+     *
      * @param accountId 账号ID
      * @param delaySeconds 延迟秒数
      * @param isManualRestart 是否主动重启（Token刷新等）
@@ -740,41 +750,54 @@ public class WebSocketServiceImpl implements WebSocketService {
             return;
         }
 
-        // 取消已有的重连任务（防止重复）
-        Future<?> existingTask = reconnectTasks.get(accountId);
+        // 递增代次：本次调度的"身份证"
+        AtomicLong genCounter = reconnectGenerations.computeIfAbsent(accountId, k -> new AtomicLong());
+        final long myGen = genCounter.incrementAndGet();
+
+        // 取消未开始的旧任务；已开始的旧任务通过代次自检退出
+        Future<?> existingTask = reconnectTasks.remove(accountId);
         if (existingTask != null && !existingTask.isDone()) {
-            log.debug("【账号{}】已有重连任务在执行，跳过", accountId);
-            return;
+            boolean cancelled = existingTask.cancel(false);
+            log.info("【账号{}】发现旧重连任务，cancel={}，按新原因（{}秒，第{}代）重新调度",
+                    accountId, cancelled, delaySeconds, myGen);
         }
-        
+
         // 重置重启标志
         if (isManualRestart) {
             connectionRestartFlags.put(accountId, false);
         }
-        
+
         // 获取/初始化重连次数
         AtomicInteger attemptCount = reconnectAttemptCounts.computeIfAbsent(accountId, k -> new AtomicInteger(0));
-        
+
         // 参考Python: 无限重连，但使用指数退避
         int currentAttempt = attemptCount.incrementAndGet();
         // 指数退避: 5s, 10s, 20s, 40s, 60s, 60s, ... 最大60秒
-        int actualDelay = isManualRestart ? delaySeconds : 
+        int actualDelay = isManualRestart ? delaySeconds :
                 Math.min(delaySeconds * (int) Math.pow(2, Math.min(currentAttempt - 1, 4)), 60);
-        
-        log.info("【账号{}】计划{}秒后执行重连（第{}次尝试）...", accountId, actualDelay, currentAttempt);
-        
+
+        log.info("【账号{}】计划{}秒后执行重连（第{}次尝试，gen={}）...",
+                accountId, actualDelay, currentAttempt, myGen);
+
         ScheduledFuture<?> reconnectTask = reconnectExecutor.schedule(() -> {
             try {
+                // 自检：是否仍为最新代次。旧代次任务在等待期间被新代次覆盖时直接退出，避免双连
+                long currentGen = genCounter.get();
+                if (currentGen != myGen) {
+                    log.info("【账号{}】重连任务已被新代次替换（mine={}, current={}），跳过执行",
+                            accountId, myGen, currentGen);
+                    return;
+                }
                 reconnectTasks.remove(accountId);
 
                 if (tokenService.isCaptchaWaiting(accountId)) {
                     log.info("【账号{}】账号正在等待人机验证，停止执行重连任务", accountId);
                     return;
                 }
-                
+
                 // 停止当前连接和心跳
                 stopWebSocket(accountId);
-                
+
                 // 参考Python: 重连前先刷新Cookie（hasLogin保活）
                 try {
                     if (cookieRefreshService != null) {
@@ -794,42 +817,42 @@ public class WebSocketServiceImpl implements WebSocketService {
                 } catch (Exception e) {
                     log.warn("【账号{}】重连前Cookie检查/兜底刷新异常，继续尝试重连: {}", accountId, e.getMessage());
                 }
-                
+
                 // 重新启动连接
                 boolean success = startWebSocket(accountId);
-                
+
                 if (success) {
                     // 重连成功，重置计数
                     attemptCount.set(0);
                     log.info("【账号{}】✅ 重连成功", accountId);
-                    
-                    operationLogService.log(accountId, 
-                        OperationConstants.Type.RECONNECT, 
+
+                    operationLogService.log(accountId,
+                        OperationConstants.Type.RECONNECT,
                         OperationConstants.Module.WEBSOCKET,
-                        isManualRestart ? "主动重启连接成功" : "异常断开后重连成功", 
+                        isManualRestart ? "主动重启连接成功" : "异常断开后重连成功",
                         OperationConstants.Status.SUCCESS,
-                        OperationConstants.TargetType.WEBSOCKET, 
+                        OperationConstants.TargetType.WEBSOCKET,
                         String.valueOf(accountId),
                         null, null, null, null);
                 } else if (tokenService.isCaptchaWaiting(accountId)) {
                     log.info("【账号{}】重连过程中进入人机验证等待，停止继续重连", accountId);
                 } else {
                     log.error("【账号{}】❌ 重连失败（第{}次），将继续尝试...", accountId, currentAttempt);
-                    
-                    operationLogService.log(accountId, 
-                        OperationConstants.Type.RECONNECT, 
+
+                    operationLogService.log(accountId,
+                        OperationConstants.Type.RECONNECT,
                         OperationConstants.Module.WEBSOCKET,
-                        "重连失败（第" + currentAttempt + "次）", 
+                        "重连失败（第" + currentAttempt + "次）",
                         OperationConstants.Status.FAIL,
-                        OperationConstants.TargetType.WEBSOCKET, 
+                        OperationConstants.TargetType.WEBSOCKET,
                         String.valueOf(accountId),
                         null, null, null, null);
-                    
+
                     // 重连失败达到阈值时触发邮件通知
                     if (currentAttempt >= RECONNECT_NOTIFY_THRESHOLD) {
                         triggerWsDisconnectNotify(accountId);
                     }
-                    
+
                     // 参考Python: 重连失败后继续尝试（while True循环）
                     scheduleReconnect(accountId, config.getReconnectDelay(), false);
                 }
@@ -844,7 +867,7 @@ public class WebSocketServiceImpl implements WebSocketService {
                 scheduleReconnect(accountId, config.getReconnectDelay(), false);
             }
         }, actualDelay, TimeUnit.SECONDS);
-        
+
         reconnectTasks.put(accountId, reconnectTask);
     }
     
@@ -983,12 +1006,32 @@ public class WebSocketServiceImpl implements WebSocketService {
     public void cleanup() {
         log.info("应用关闭，清理WebSocket资源");
         stopAllWebSockets();
-        
+
         // 关闭Token刷新调度器
         tokenRefreshScheduler.shutdown();
-        
+
         // 关闭重连调度器
         reconnectExecutor.shutdown();
+    }
+
+    /**
+     * 账号删除事件处理：先断开连接，再清理 stopHeartbeat 未涉及的剩余状态
+     *
+     * <p>stopWebSocket → stopHeartbeat 已清理：心跳/Token刷新/重连任务、心跳响应/发送时间、Token刷新时间、连接重启标志。
+     * 账号删除场景额外需要清理：重连次数计数、断开通知防抖记录、重连代次（避免幽灵代次干扰未来同 id 的账号）。</p>
+     */
+    @EventListener
+    public void onAccountRemoved(AccountRemovedEvent event) {
+        Long accountId = event.getAccountId();
+        try {
+            log.info("【账号{}】收到账号删除事件，断开 WebSocket 并清理连接状态", accountId);
+            stopWebSocket(accountId);
+            reconnectAttemptCounts.remove(accountId);
+            lastDisconnectNotifyTimes.remove(accountId);
+            reconnectGenerations.remove(accountId);
+        } catch (Exception e) {
+            log.warn("【账号{}】账号删除事件处理异常: {}", accountId, e.getMessage(), e);
+        }
     }
 
     private void triggerWsDisconnectNotify(Long accountId) {

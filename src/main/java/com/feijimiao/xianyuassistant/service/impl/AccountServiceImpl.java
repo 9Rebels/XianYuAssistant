@@ -11,11 +11,13 @@ import com.feijimiao.xianyuassistant.service.AccountIdentityGuard;
 import com.feijimiao.xianyuassistant.service.AccountDataCleanupService;
 import com.feijimiao.xianyuassistant.service.NotificationService;
 import com.feijimiao.xianyuassistant.service.XianyuApiRecoveryService;
+import com.feijimiao.xianyuassistant.event.account.AccountRemovedEvent;
 import com.feijimiao.xianyuassistant.service.bo.XianyuApiRecoveryRequest;
 import com.feijimiao.xianyuassistant.service.bo.XianyuApiRecoveryResult;
 import com.feijimiao.xianyuassistant.utils.DateTimeUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -56,6 +58,9 @@ public class AccountServiceImpl implements AccountService {
 
     @Autowired
     private AccountDataCleanupService accountDataCleanupService;
+
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
     
     /**
      * 获取当前时间字符串
@@ -463,10 +468,20 @@ public class AccountServiceImpl implements AccountService {
     }
     
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public boolean deleteAccountAndRelatedData(Long accountId) {
         try {
             log.info("开始删除账号及其所有关联数据: accountId={}", accountId);
+
+            // 先广播账号移除事件，让连接管理、浏览器池、Token 状态等同步释放资源
+            // 监听器内部需自行 try/catch，避免单个监听器失败阻断后续清理
+            try {
+                eventPublisher.publishEvent(new AccountRemovedEvent(this, accountId));
+            } catch (Exception e) {
+                log.warn("发布 AccountRemovedEvent 失败，继续删除 DB 数据: accountId={}", accountId, e);
+            }
+
+            // 内部 cleanupService 自带 @Transactional，DB 数据删除失败会回滚，但 DB 回滚不会反向恢复内存状态
+            // 这是可接受的：失败后账号仍存在，下次操作会重新建立连接
             accountDataCleanupService.deleteAccountAndRelatedData(accountId);
             log.info("账号及其所有关联数据删除成功: accountId={}", accountId);
             return true;

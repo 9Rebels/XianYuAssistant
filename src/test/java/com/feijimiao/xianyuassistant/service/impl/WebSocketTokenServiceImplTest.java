@@ -98,7 +98,30 @@ class WebSocketTokenServiceImplTest {
 
         assertTrue(autoSolved);
         verify(accountService).updateAccountCookie(11L, "abc", "unb=abc; new-cookie=value");
-        verify(notificationService).notifyEvent(
+        verify(notificationService, never()).notifyEvent(
+                eq(NotificationService.EVENT_CAPTCHA_SUCCESS),
+                eq("【闲鱼助手】人机验证恢复成功"),
+                anyString());
+    }
+
+    @Test
+    void notifyCaptchaSuccessIfPendingDebouncesRepeatedNotifications() {
+        WebSocketTokenServiceImpl service = new WebSocketTokenServiceImpl();
+        NotificationService notificationService = mock(NotificationService.class);
+        NotificationContentBuilder contentBuilder = mock(NotificationContentBuilder.class);
+
+        ReflectionTestUtils.setField(service, "notificationService", notificationService);
+        ReflectionTestUtils.setField(service, "notificationContentBuilder", contentBuilder);
+
+        when(contentBuilder.eventContent(eq(11L), anyString(), anyString(), anyString()))
+                .thenReturn("success-content");
+
+        ReflectionTestUtils.invokeMethod(service, "markCaptchaSuccessNotifyPending", 11L);
+        ReflectionTestUtils.invokeMethod(service, "notifyCaptchaSuccessIfPending", 11L);
+        ReflectionTestUtils.invokeMethod(service, "markCaptchaSuccessNotifyPending", 11L);
+        ReflectionTestUtils.invokeMethod(service, "notifyCaptchaSuccessIfPending", 11L);
+
+        verify(notificationService, times(1)).notifyEvent(
                 eq(NotificationService.EVENT_CAPTCHA_SUCCESS),
                 eq("【闲鱼助手】人机验证恢复成功"),
                 eq("success-content"));

@@ -2,8 +2,10 @@ package com.feijimiao.xianyuassistant.service;
 
 import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.Cookie;
+import com.feijimiao.xianyuassistant.event.account.AccountRemovedEvent;
 import com.feijimiao.xianyuassistant.utils.PlaywrightBrowserUtils;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.PreDestroy;
@@ -482,6 +484,21 @@ public class BrowserPool {
         if (instance != null) {
             instance.close();
             log.info("浏览器实例已关闭: accountId={}", accountId);
+        }
+    }
+
+    /**
+     * 账号删除事件处理：关闭对应浏览器实例并释放账号级锁
+     */
+    @EventListener
+    public void onAccountRemoved(AccountRemovedEvent event) {
+        Long accountId = event.getAccountId();
+        try {
+            log.info("【账号{}】收到账号删除事件，关闭浏览器实例并释放账号锁", accountId);
+            closeBrowser(accountId);
+            locks.remove(accountId);
+        } catch (Exception e) {
+            log.warn("【账号{}】浏览器池账号删除事件处理异常: {}", accountId, e.getMessage(), e);
         }
     }
 
