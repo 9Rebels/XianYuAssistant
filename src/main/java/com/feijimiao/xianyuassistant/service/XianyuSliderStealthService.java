@@ -502,7 +502,15 @@ public class XianyuSliderStealthService {
                 "--no-default-browser-check",
                 "--force-color-profile=srgb",
                 "--password-store=basic",
-                "--use-mock-keychain"
+                "--use-mock-keychain",
+                // ↓ adryfish/fingerprint-chromium 底层指纹开关：不传 --fingerprint 等价裸跑 ungoogled-chromium
+                "--fingerprint=" + browserProfile.getFingerprintSeed(),
+                "--fingerprint-platform=windows",
+                "--fingerprint-platform-version=10.0.0",
+                "--fingerprint-brand=Chrome",
+                "--fingerprint-brand-version=" + browserProfile.getMajorVersion(),
+                "--fingerprint-hardware-concurrency=" + browserProfile.getHardwareConcurrency(),
+                "--timezone=" + browserProfile.getTimezoneId()
         );
     }
 

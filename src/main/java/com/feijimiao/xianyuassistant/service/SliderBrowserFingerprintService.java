@@ -80,8 +80,26 @@ public class SliderBrowserFingerprintService {
                 stableInt(accountId, "notification", 0, 1) == 0 ? "default" : "denied",
                 stableInt(accountId, "dnt", 0, 2) == 0 ? "0" : "unspecified",
                 30 + stableInt(accountId, "rtt", 0, 40),
-                4.5D + stableInt(accountId, "downlink", 0, 45) / 10D
+                4.5D + stableInt(accountId, "downlink", 0, 45) / 10D,
+                computeFingerprintSeed(accountId)
         );
+    }
+
+    private int computeFingerprintSeed(Long accountId) {
+        if (accountId == null) {
+            return 0x6F6F6F6F;
+        }
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] bytes = digest.digest(("fingerprint-seed:" + accountId).getBytes(StandardCharsets.UTF_8));
+            int value = ((bytes[0] & 0xff) << 24)
+                    | ((bytes[1] & 0xff) << 16)
+                    | ((bytes[2] & 0xff) << 8)
+                    | (bytes[3] & 0xff);
+            return value & 0x7FFFFFFF;
+        } catch (Exception e) {
+            return Math.abs(Long.hashCode(accountId));
+        }
     }
 
     Map<String, String> extraHeaders(BrowserProfile profile) {
@@ -324,17 +342,8 @@ public class SliderBrowserFingerprintService {
                             { deviceId: 'default', kind: 'audiooutput', label: '', groupId: 'default' }
                         ]);
                     }
-                    const patchWebGL = (prototype) => {
-                        if (!prototype || !prototype.getParameter) return;
-                        const originalGetParameter = prototype.getParameter;
-                        prototype.getParameter = function(parameter) {
-                            if (parameter === 37445) return 'Google Inc. (Intel)';
-                            if (parameter === 37446) return 'ANGLE (Intel, Intel(R) UHD Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)';
-                            return originalGetParameter.call(this, parameter);
-                        };
-                    };
-                    patchWebGL(window.WebGLRenderingContext && WebGLRenderingContext.prototype);
-                    patchWebGL(window.WebGL2RenderingContext && WebGL2RenderingContext.prototype);
+                    // WebGL / Canvas / Audio 指纹由 fingerprint-chromium 底层 --fingerprint=<seed> 接管，
+                    // 此处不再在 JS 层重写 WebGLRenderingContext.getParameter，避免与底层值产生穿帮差异。
                     const originalToString = Function.prototype.toString;
                     Function.prototype.toString = function() {
                         if (this === window.navigator.permissions.query) return 'function query() { [native code] }';
@@ -506,5 +515,6 @@ public class SliderBrowserFingerprintService {
         String doNotTrack;
         int connectionRtt;
         double connectionDownlink;
+        int fingerprintSeed;
     }
 }

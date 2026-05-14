@@ -428,7 +428,15 @@ public class PasswordLoginService {
                         "--no-first-run", "--disable-blink-features=AutomationControlled",
                         "--window-size=" + profile.getViewportWidth() + "," + profile.getViewportHeight(),
                         "--lang=" + profile.getLocale(), "--mute-audio",
-                        "--force-color-profile=srgb", "--password-store=basic", "--use-mock-keychain"
+                        "--force-color-profile=srgb", "--password-store=basic", "--use-mock-keychain",
+                        // ↓ adryfish/fingerprint-chromium 底层指纹开关，与 XianyuSliderStealthService 共用同一账号 seed
+                        "--fingerprint=" + profile.getFingerprintSeed(),
+                        "--fingerprint-platform=windows",
+                        "--fingerprint-platform-version=10.0.0",
+                        "--fingerprint-brand=Chrome",
+                        "--fingerprint-brand-version=" + profile.getMajorVersion(),
+                        "--fingerprint-hardware-concurrency=" + profile.getHardwareConcurrency(),
+                        "--timezone=" + profile.getTimezoneId()
                 ))
                 .setViewportSize(profile.getViewportWidth(), profile.getViewportHeight())
                 .setUserAgent(profile.getUserAgent())
