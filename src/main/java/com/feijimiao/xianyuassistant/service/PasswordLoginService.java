@@ -2,9 +2,13 @@ package com.feijimiao.xianyuassistant.service;
 
 import com.feijimiao.xianyuassistant.config.SliderProperties;
 import com.feijimiao.xianyuassistant.entity.XianyuAccount;
+import com.feijimiao.xianyuassistant.entity.XianyuCookie;
+import com.feijimiao.xianyuassistant.enums.CookieStatus;
 import com.feijimiao.xianyuassistant.mapper.XianyuAccountMapper;
+import com.feijimiao.xianyuassistant.mapper.XianyuCookieMapper;
 import com.feijimiao.xianyuassistant.sse.SseEventBus;
 import com.feijimiao.xianyuassistant.utils.PlaywrightBrowserUtils;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.WaitUntilState;
 import lombok.extern.slf4j.Slf4j;
@@ -22,11 +26,17 @@ import java.util.concurrent.ThreadLocalRandom;
 public class PasswordLoginService {
 
     private static final String LOGIN_URL = "https://www.goofish.com/im";
+    private static final String PASSPORT_LOGIN_URL = "https://passport.goofish.com/mini_login.htm?lang=zh_CN&appName=xianyu&appEntrance=xianyu&styleType=auto&bizParams=&notLoadSso498View=false&notKeepLogin=true&isMobile=false&showSns498Login=false&ut=&returnUrl=https%3A%2F%2Fwww.goofish.com%2Fim&fromSite=77";
     private static final String HOMEPAGE_URL = "https://www.goofish.com";
     private static final int VERIFICATION_WAIT_TIMEOUT_SECONDS = 300;
+    private static final String NEED_CLEAN_PROFILE = "__NEED_CLEAN_PROFILE__";
+    private static final String NEED_PASSPORT_REDIRECT = "__NEED_PASSPORT_REDIRECT__";
 
     @Autowired
     private XianyuAccountMapper accountMapper;
+
+    @Autowired
+    private XianyuCookieMapper cookieMapper;
 
     @Autowired
     @Lazy
@@ -153,14 +163,11 @@ public class PasswordLoginService {
             Browser browser = playwright.chromium().connectOverCDP(launcher.getCdpUrl());
             BrowserContext context = browser.contexts().isEmpty()
                     ? browser.newContext() : browser.contexts().get(0);
-            String stealthScript = fingerprintService.stealthScript(profile);
-            if (stealthScript != null && !stealthScript.isBlank()) {
-                context.addInitScript(stealthScript);
-            }
-            context.addInitScript(headfulStealthScript());
 
             try {
                 Page page = context.pages().isEmpty() ? context.newPage() : context.pages().get(0);
+                // 通过 CDP 原生协议注入脚本，确保所有 frame（含 iframe）中都生效
+                injectStealthViaCDP(page);
                 return executeLoginFlow(page, context, accountId, username, password);
             } finally {
                 clearPendingManualVerification(accountId, context);
@@ -217,6 +224,15 @@ public class PasswordLoginService {
             log.info("[PasswordLogin] 未找到{}，但复检确认已登录: accountId={}", missingField, accountId);
             return cookieCheck.cookieText();
         }
+
+        // CDP模式下通过JS Cookie检查是否已登录
+        String jsCookie = extractCookieViaJs(page);
+        if (jsCookie != null && !jsCookie.isBlank() && jsCookie.contains("unb=")) {
+            log.info("[PasswordLogin] 未找到{}，但JS Cookie确认已登录: accountId={}", missingField, accountId);
+            notifyVerificationSuccess(accountId);
+            return jsCookie;
+        }
+
         String text = pageHelper.snapshotText(page);
         if (stateInspector.hasHardReject(text)) {
             log.warn("[PasswordLogin] 未找到{}，页面已命中硬拒绝: accountId={}", missingField, accountId);
@@ -230,12 +246,11 @@ public class PasswordLoginService {
             notifyVerificationRequired(page, accountId, verificationType);
             return waitForLoginSuccess(page, context, accountId);
         }
-        if (!stateInspector.hasLoginFormHint(text)) {
-            log.warn("[PasswordLogin] 未找到{}且页面无登录表单提示: accountId={}, url={}",
-                    missingField, accountId, page.url());
-            notifyManualVerification(page, accountId, "登录人工验证", "未找到" + missingField + "，请按截图页面提示处理");
-        }
-        return null;
+
+        // 页面无实际登录表单（可能是IM SPA shell），导航到passport登录页重试
+        log.info("[PasswordLogin] 未找到{}，导航到passport登录页重试: accountId={}, url={}",
+                missingField, accountId, page.url());
+        return NEED_PASSPORT_REDIRECT;
     }
 
     private boolean needsManualVerification(Page page) {
@@ -480,7 +495,9 @@ public class PasswordLoginService {
                         "--timezone=" + profile.getTimezoneId(),
                         "--use-gl=angle",
                         "--use-angle=swiftshader-webgl",
-                        "--enable-unsafe-swiftshader"
+                        "--enable-unsafe-swiftshader",
+                        "--ignore-gpu-blocklist",
+                        "--disable-gpu-driver-bug-workarounds"
                 ))
                 .setViewportSize(profile.getViewportWidth(), profile.getViewportHeight())
                 .setUserAgent(profile.getUserAgent())
@@ -545,10 +562,38 @@ public class PasswordLoginService {
                 .setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(30000));
         page.waitForTimeout(randomBetween(2000, 3500));
 
+        // 导航后确保所有 frame 中的反检测脚本生效
+        ensureStealthOnPage(page);
+
+        // 优先检查：通过JS Cookie判断是否已有登录态（不使用fetch，避免page.evaluate挂起）
+        String existingCookie = extractCookieViaJs(page);
+        if (existingCookie != null && !existingCookie.isBlank() && existingCookie.contains("unb=")) {
+            log.info("[PasswordLogin] /im页面已有登录态Cookie，直接返回: accountId={}, length={}",
+                    accountId, existingCookie.length());
+            notifyVerificationSuccess(accountId);
+            return existingCookie;
+        }
+
+        // 有登录态时 /im 页面可能直接弹滑块而非登录表单，先检测滑块
+        if (pageHelper.hasSliderInAnyFrame(page)) {
+            log.info("[PasswordLogin] /im页面直接检测到滑块（已有登录态），直接处理滑块: accountId={}", accountId);
+            captchaDebugImageService.capture(page, accountId, "password_login_slider_on_im");
+            handleSliderWithRetry(page, page.mainFrame(), accountId, 3);
+            return waitForLoginSuccess(page, context, accountId);
+        }
+
         Frame loginFrame = pageHelper.findLoginFrame(page);
         if (loginFrame == null) {
-            log.warn("[PasswordLogin] 未找到登录frame，尝试在主页面查找");
+            log.warn("[PasswordLogin] 未找到登录frame，截图后尝试在主页面查找");
+            captchaDebugImageService.capture(page, accountId, "password_login_no_frame");
             loginFrame = page.mainFrame();
+        }
+
+        // findLoginFrame 可能因检测到滑块而返回 mainFrame，再次检查
+        if (pageHelper.hasSliderInAnyFrame(page)) {
+            log.info("[PasswordLogin] 轮询后检测到滑块，直接处理: accountId={}", accountId);
+            handleSliderWithRetry(page, loginFrame, accountId, 3);
+            return waitForLoginSuccess(page, context, accountId);
         }
 
         pageHelper.clickPasswordLoginTab(loginFrame);
@@ -558,7 +603,11 @@ public class PasswordLoginService {
         if (accountInput == null) {
             log.warn("[PasswordLogin] 未找到账号输入框，当前URL: {}, frames: {}",
                     page.url(), page.frames().size());
+            captchaDebugImageService.capture(page, accountId, "password_login_no_account_input");
             String recoveredCookie = recoverFromMissingInputs(page, context, accountId, "账号输入框");
+            if (NEED_PASSPORT_REDIRECT.equals(recoveredCookie)) {
+                return retryViaPassportPage(page, context, accountId, username, password);
+            }
             if (recoveredCookie != null) {
                 return recoveredCookie;
             }
@@ -737,6 +786,378 @@ public class PasswordLoginService {
         } catch (Exception e) {
             log.debug("[PasswordLogin] 处理'保持登录状态'对话框异常: {}", e.getMessage());
         }
+    }
+
+    /**
+     * 持久化profile已登录时：在当前页面通过 fetch 验证 session 是否有效。
+     * connectOverCDP 模式下 context 不共享浏览器 Cookie store，
+     * 必须在已有页面中执行 fetch 才能带上浏览器的 Cookie。
+     */
+    private String tryExtractExistingSessionCookies(Page page, BrowserContext context, Long accountId) {
+        page.waitForTimeout(3000);
+
+        boolean sessionValid = probeSessionViaFetch(page);
+        if (!sessionValid) {
+            log.info("[PasswordLogin] 持久化profile session已过期: accountId={}", accountId);
+            return null;
+        }
+
+        log.info("[PasswordLogin] 持久化profile session有效: accountId={}", accountId);
+
+        // session有效，从数据库读取已有 Cookie 返回
+        String dbCookie = getExistingCookieFromDb(accountId);
+        if (dbCookie != null && !dbCookie.isBlank()) {
+            log.info("[PasswordLogin] session有效，复用数据库Cookie: accountId={}, length={}",
+                    accountId, dbCookie.length());
+            notifyVerificationSuccess(accountId);
+            return dbCookie;
+        }
+
+        // 数据库没有有效Cookie，尝试通过JS获取
+        String jsCookie = extractCookieViaJs(page);
+        if (jsCookie != null && !jsCookie.isBlank()) {
+            log.info("[PasswordLogin] session有效，通过JS获取Cookie: accountId={}, length={}",
+                    accountId, jsCookie.length());
+            notifyVerificationSuccess(accountId);
+            return jsCookie;
+        }
+
+        log.warn("[PasswordLogin] session有效但无法获取Cookie: accountId={}", accountId);
+        return null;
+    }
+
+    private String getExistingCookieFromDb(Long accountId) {
+        try {
+            LambdaQueryWrapper<XianyuCookie> query = new LambdaQueryWrapper<>();
+            query.eq(XianyuCookie::getXianyuAccountId, accountId)
+                    .eq(XianyuCookie::getCookieStatus, CookieStatus.VALID.getCode())
+                    .orderByDesc(XianyuCookie::getCreatedTime)
+                    .last("LIMIT 1");
+            XianyuCookie cookie = cookieMapper.selectOne(query);
+            return cookie != null ? cookie.getCookieText() : null;
+        } catch (Exception e) {
+            log.debug("[PasswordLogin] 读取数据库Cookie失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * goofish.com/im 页面无登录表单时，直接导航到 passport 登录页重试。
+     * 持久化 profile 有过期 Cookie 时，SPA 不会嵌入 passport iframe，需要直接访问。
+     */
+    private String retryViaPassportPage(Page page, BrowserContext context,
+                                        Long accountId, String username, String password) {
+        log.info("[PasswordLogin] 导航到passport登录页: accountId={}", accountId);
+        page.navigate(PASSPORT_LOGIN_URL, new Page.NavigateOptions()
+                .setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(30000));
+        page.waitForTimeout(randomBetween(2000, 3500));
+
+        Frame loginFrame = page.mainFrame();
+        pageHelper.clickPasswordLoginTab(loginFrame);
+        page.waitForTimeout(randomBetween(800, 1500));
+
+        ElementHandle accountInput = pageHelper.findAccountInput(loginFrame);
+        if (accountInput == null) {
+            log.warn("[PasswordLogin] passport页面也未找到账号输入框: url={}", page.url());
+            notifyManualVerification(page, accountId, "登录人工验证", "无法找到登录表单，请人工处理");
+            return waitForLoginSuccess(page, context, accountId);
+        }
+        accountInput.click();
+        page.waitForTimeout(randomBetween(200, 500));
+        humanType(page, username);
+        page.waitForTimeout(randomBetween(300, 600));
+
+        ElementHandle passwordInput = pageHelper.findPasswordInput(loginFrame);
+        if (passwordInput == null) {
+            log.warn("[PasswordLogin] passport页面未找到密码输入框");
+            notifyManualVerification(page, accountId, "登录人工验证", "无法找到密码输入框，请人工处理");
+            return waitForLoginSuccess(page, context, accountId);
+        }
+        passwordInput.click();
+        page.waitForTimeout(randomBetween(200, 500));
+        humanType(page, password);
+        page.waitForTimeout(randomBetween(500, 1000));
+
+        try {
+            ElementHandle checkbox = loginFrame.querySelector("#fm-agreement-checkbox, input[type=\"checkbox\"]");
+            if (checkbox != null && checkbox.isVisible() && !checkbox.isChecked()) {
+                checkbox.click();
+                page.waitForTimeout(randomBetween(300, 600));
+            }
+        } catch (Exception ignored) {}
+
+        log.info("[PasswordLogin] passport页面点击登录按钮");
+        if (!pageHelper.clickSubmit(loginFrame)) {
+            passwordInput.press("Enter");
+        }
+        page.waitForTimeout(randomBetween(3000, 5000));
+
+        handleSliderWithRetry(page, loginFrame, accountId, 3);
+        return waitForLoginSuccess(page, context, accountId);
+    }
+
+    /**
+     * 仅通过 fetch 检查 session 是否有效，不会导航离开当前页面。
+     * 用于 executeLoginFlow 开头判断是否已有登录态。
+     */
+    private boolean isSessionValidViaFetchOnly(Page page) {
+        try {
+            Object result = page.evaluate(
+                    "() => { const ac = new AbortController(); setTimeout(() => ac.abort(), 8000);"
+                            + " return fetch('https://h5api.m.goofish.com/h5/mtop.taobao.idlemessage.pc.login.token/1.0/"
+                            + "?jsv=2.7.2&appKey=34839810&type=originaljson&dataType=json&v=1.0"
+                            + "&api=mtop.taobao.idlemessage.pc.login.token&sessionOption=AutoLoginOnly',"
+                            + " {credentials:'include', signal:ac.signal}).then(r => r.text()).catch(() => 'FETCH_ERROR'); }");
+            if (result != null) {
+                String content = result.toString();
+                if (!"FETCH_ERROR".equals(content)) {
+                    boolean valid = !content.contains("FAIL_SYS_SESSION_EXPIRED")
+                            && !content.contains("FAIL_SYS_USER_VALIDATE");
+                    log.info("[PasswordLogin] fetch-only session探测: valid={}", valid);
+                    return valid;
+                }
+            }
+        } catch (Exception e) {
+            log.debug("[PasswordLogin] fetch-only session探测异常: {}", e.getMessage());
+        }
+        return false;
+    }
+
+    private boolean probeSessionViaFetch(Page page) {
+        try {
+            // 先尝试 fetch（跨域可能被 CORS 阻止）
+            Object result = page.evaluate(
+                    "() => fetch('https://h5api.m.goofish.com/h5/mtop.taobao.idlemessage.pc.login.token/1.0/"
+                            + "?jsv=2.7.2&appKey=34839810&type=originaljson&dataType=json&v=1.0"
+                            + "&api=mtop.taobao.idlemessage.pc.login.token&sessionOption=AutoLoginOnly',"
+                            + " {credentials:'include'}).then(r => r.text()).catch(() => 'FETCH_ERROR')");
+            if (result != null) {
+                String content = result.toString();
+                if (!"FETCH_ERROR".equals(content)) {
+                    log.info("[PasswordLogin] fetch probe结果: contains_expired={}",
+                            content.contains("FAIL_SYS_SESSION_EXPIRED"));
+                    return !content.contains("FAIL_SYS_SESSION_EXPIRED")
+                            && !content.contains("FAIL_SYS_USER_VALIDATE");
+                }
+            }
+        } catch (Exception e) {
+            log.debug("[PasswordLogin] fetch probe异常: {}", e.getMessage());
+        }
+        // fetch 失败，通过导航当前页面到 API URL 来验证
+        try {
+            String apiUrl = "https://h5api.m.goofish.com/h5/mtop.taobao.idlemessage.pc.login.token/1.0/"
+                    + "?jsv=2.7.2&appKey=34839810&type=originaljson&dataType=json&v=1.0"
+                    + "&api=mtop.taobao.idlemessage.pc.login.token&sessionOption=AutoLoginOnly";
+            page.navigate(apiUrl, new Page.NavigateOptions()
+                    .setWaitUntil(WaitUntilState.DOMCONTENTLOADED).setTimeout(10000));
+            String content = page.content();
+            boolean valid = content != null
+                    && !content.contains("FAIL_SYS_SESSION_EXPIRED")
+                    && !content.contains("FAIL_SYS_USER_VALIDATE");
+            log.info("[PasswordLogin] 导航probe结果: valid={}", valid);
+            return valid;
+        } catch (Exception e) {
+            log.debug("[PasswordLogin] 导航probe失败: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    private String extractCookieViaJs(Page page) {
+        try {
+            Object result = page.evaluate("() => document.cookie");
+            if (result == null) return null;
+            String cookieStr = result.toString();
+            if (cookieStr.isBlank()) return null;
+            return cookieStr;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void clearCookiesViaCdp(Page page, BrowserContext context) {
+        CDPSession session = null;
+        try {
+            session = context.newCDPSession(page);
+            session.send("Network.clearBrowserCookies");
+            session.send("Storage.clearDataForOrigin",
+                    com.google.gson.JsonParser.parseString(
+                            "{\"origin\":\"https://www.goofish.com\",\"storageTypes\":\"all\"}").getAsJsonObject());
+            session.send("Storage.clearDataForOrigin",
+                    com.google.gson.JsonParser.parseString(
+                            "{\"origin\":\"https://login.taobao.com\",\"storageTypes\":\"all\"}").getAsJsonObject());
+            log.info("[PasswordLogin] CDP清除Cookie和Storage完成");
+        } catch (Exception e) {
+            log.warn("[PasswordLogin] CDP清除失败，回退context.clearCookies: {}", e.getMessage());
+            try { context.clearCookies(); } catch (Exception ignored) {}
+        } finally {
+            if (session != null) {
+                try { session.detach(); } catch (Exception ignored) {}
+            }
+        }
+        try {
+            page.evaluate("() => { try { localStorage.clear(); sessionStorage.clear(); } catch(e) {} }");
+        } catch (Exception ignored) {}
+    }
+
+    private void deleteProfileCookies(Path profileDir) {
+        try {
+            // 删除整个 Default 目录中的登录相关数据
+            Path defaultDir = profileDir.resolve("Default");
+            if (Files.exists(defaultDir)) {
+                Files.walk(defaultDir)
+                        .sorted(java.util.Comparator.reverseOrder())
+                        .forEach(p -> {
+                            try { Files.deleteIfExists(p); } catch (Exception ignored) {}
+                        });
+            }
+            log.info("[PasswordLogin] 已清理profile目录: {}", profileDir);
+        } catch (Exception e) {
+            log.warn("[PasswordLogin] 清理profile目录失败: {}", e.getMessage());
+        }
+    }
+
+    private String doTryPasswordLoginClean(Long accountId, String username, String password,
+                                           SliderBrowserFingerprintService.BrowserProfile profile,
+                                           Path profileDir) {
+        ExternalBrowserLauncher launcher = null;
+        try {
+            Files.createDirectories(profileDir);
+            List<String> launchArgs = buildExternalLaunchArgs(profile);
+            launcher = ExternalBrowserLauncher.launch(launchArgs, profileDir, accountId);
+        } catch (Exception e) {
+            log.error("[PasswordLogin] 清理后重启浏览器失败: accountId={}, error={}", accountId, e.getMessage());
+            if (launcher != null) launcher.shutdown();
+            return null;
+        }
+        try (Playwright playwright = Playwright.create()) {
+            Browser browser = playwright.chromium().connectOverCDP(launcher.getCdpUrl());
+            BrowserContext context = browser.contexts().isEmpty()
+                    ? browser.newContext() : browser.contexts().get(0);
+            try {
+                Page page = context.pages().isEmpty() ? context.newPage() : context.pages().get(0);
+                injectStealthViaCDP(page);
+                return executeLoginFlow(page, context, accountId, username, password);
+            } finally {
+                clearPendingManualVerification(accountId, context);
+                context.close();
+            }
+        } catch (Exception e) {
+            log.error("[PasswordLogin] 清理后登录异常: accountId={}", accountId, e);
+            return null;
+        } finally {
+            if (launcher != null) launcher.shutdown();
+        }
+    }
+
+    /**
+     * 通过 CDP 原生协议 Page.addScriptToEvaluateOnNewDocument 注入反检测脚本。
+     * 相比 context.addInitScript()，CDP 协议注入能确保脚本在所有 frame（含 iframe）中都生效，
+     * 且在页面 JS 执行之前运行。
+     */
+    private void injectStealthViaCDP(Page page) {
+        CDPSession cdpSession = null;
+        try {
+            cdpSession = page.context().newCDPSession(page);
+            com.google.gson.JsonObject params = new com.google.gson.JsonObject();
+            params.addProperty("source", minimalCdpStealthScript());
+            cdpSession.send("Page.addScriptToEvaluateOnNewDocument", params);
+            log.info("[PasswordLogin] CDP注入反检测脚本成功");
+        } catch (Exception e) {
+            log.warn("[PasswordLogin] CDP注入失败，回退addInitScript: {}", e.getMessage());
+            try {
+                page.context().addInitScript(minimalCdpStealthScript());
+            } catch (Exception ignored) {}
+        } finally {
+            if (cdpSession != null) {
+                try { cdpSession.detach(); } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    /**
+     * 在导航后验证 WebGL 伪装是否生效，并在当前页面补注入（针对已加载的页面）。
+     */
+    private void ensureStealthOnPage(Page page) {
+        try {
+            // 先在当前页面直接执行伪装脚本（针对已加载的主 frame）
+            page.evaluate(minimalCdpStealthScript());
+            // 对所有 iframe 也执行
+            for (com.microsoft.playwright.Frame frame : page.frames()) {
+                if (frame == page.mainFrame()) continue;
+                try {
+                    frame.evaluate(minimalCdpStealthScript());
+                } catch (Exception ignored) {}
+            }
+            // 验证
+            Object renderer = page.evaluate(
+                    "() => { try { const c = document.createElement('canvas'); const gl = c.getContext('webgl'); "
+                            + "const ext = gl.getExtension('WEBGL_debug_renderer_info'); "
+                            + "return gl.getParameter(ext.UNMASKED_RENDERER_WEBGL); } catch(e) { return 'ERROR:' + e.message; } }");
+            log.info("[PasswordLogin] WebGL渲染器验证: {}", renderer);
+        } catch (Exception e) {
+            log.debug("[PasswordLogin] WebGL验证异常: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * connectOverCDP 模式下的最小化反检测脚本。
+     * 仅包含 WebGL 渲染器伪装（SwiftShader→Intel UHD 630）和 Playwright 痕迹清除，
+     * 不修改 DOM/网络/存储等会导致 goofish.com/im SPA 白屏的部分。
+     */
+    private String minimalCdpStealthScript() {
+        return """
+                (() => {
+                    // 1. WebGL 渲染器伪装：Docker SwiftShader → Intel UHD Graphics 630
+                    const spoofRenderer = 'ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+                    const spoofVendor = 'Google Inc. (Intel)';
+                    const getParameterProto = WebGLRenderingContext.prototype.getParameter;
+                    const getParameter2Proto = (typeof WebGL2RenderingContext !== 'undefined')
+                        ? WebGL2RenderingContext.prototype.getParameter : null;
+
+                    function patchGetParameter(original) {
+                        return function(param) {
+                            const ext = this.getExtension('WEBGL_debug_renderer_info');
+                            if (ext) {
+                                if (param === ext.UNMASKED_RENDERER_WEBGL) return spoofRenderer;
+                                if (param === ext.UNMASKED_VENDOR_WEBGL) return spoofVendor;
+                            }
+                            // 硬编码常见枚举值兜底
+                            if (param === 0x9246) return spoofRenderer;
+                            if (param === 0x9245) return spoofVendor;
+                            return original.call(this, param);
+                        };
+                    }
+                    WebGLRenderingContext.prototype.getParameter = patchGetParameter(getParameterProto);
+                    if (getParameter2Proto) {
+                        WebGL2RenderingContext.prototype.getParameter = patchGetParameter(getParameter2Proto);
+                    }
+
+                    // 2. navigator.webdriver = false
+                    Object.defineProperty(Navigator.prototype, 'webdriver', {
+                        get: () => false, configurable: true
+                    });
+
+                    // 3. 清除 Playwright/WebDriver 全局变量
+                    [
+                        'playwright', '__playwright', '__pw_manual', '__pw_original', 'webdriver',
+                        '__webdriver_script_fn', '__webdriver_evaluate', '__webdriver_unwrapped',
+                        '__playwright_evaluation_script__', '__pw_d'
+                    ].forEach(key => { try { delete window[key]; } catch(e) {} });
+
+                    // 4. Function.prototype.toString 保护：让 getParameter 看起来是 native code
+                    const nativeToString = Function.prototype.toString;
+                    const spoofed = new Set([
+                        WebGLRenderingContext.prototype.getParameter,
+                        getParameter2Proto ? WebGL2RenderingContext.prototype.getParameter : null
+                    ].filter(Boolean));
+                    Function.prototype.toString = function() {
+                        if (spoofed.has(this)) return 'function getParameter() { [native code] }';
+                        if (this === Function.prototype.toString) return 'function toString() { [native code] }';
+                        return nativeToString.call(this);
+                    };
+                    spoofed.add(Function.prototype.toString);
+                })();
+                """;
     }
 
     private long randomBetween(long min, long max) {

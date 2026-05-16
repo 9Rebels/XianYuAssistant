@@ -143,6 +143,8 @@ public class SliderBrowserFingerprintService {
         args.add("--use-gl=angle");
         args.add("--use-angle=swiftshader-webgl");
         args.add("--enable-unsafe-swiftshader");
+        args.add("--ignore-gpu-blocklist");
+        args.add("--disable-gpu-driver-bug-workarounds");
         return args;
     }
 

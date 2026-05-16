@@ -249,29 +249,30 @@ public class CaptchaService {
     }
 
     private CaptchaResult runFullSliderVerification(Long accountId, String cookieText, String targetUrl) {
-        // 优先尝试账密登录恢复（跳过自动滑块，滑块当前不稳定）
+        // 优先尝试自动滑块验证（WebGL伪装+CDP反检测已就绪）
+        if (xianyuSliderStealthService != null) {
+            log.info("尝试自动滑块验证: accountId={}, url={}", accountId, targetUrl);
+            XianyuSliderStealthService.SliderVerificationResult sliderResult =
+                    xianyuSliderStealthService.verify(accountId, cookieText, targetUrl, true);
+            if (sliderResult.isSuccess()
+                    && sliderResult.getCookieText() != null
+                    && !sliderResult.getCookieText().isBlank()) {
+                log.info("自动滑块验证成功: accountId={}, cookieLength={}",
+                        accountId, sliderResult.getCookieText().length());
+                return CaptchaResult.autoSuccess(sliderResult.getCookieText());
+            }
+            log.warn("自动滑块验证失败: accountId={}", accountId);
+        }
+
+        // 自动滑块失败后尝试账密登录恢复
         if (passwordLoginService != null && accountId != null) {
-            log.info("跳过自动滑块，直接尝试账密登录恢复: accountId={}", accountId);
+            log.info("自动滑块失败，尝试账密登录恢复: accountId={}", accountId);
             String newCookie = passwordLoginService.tryPasswordLogin(accountId);
             if (newCookie != null && !newCookie.isBlank()) {
                 log.info("账密登录恢复成功: accountId={}, cookieLength={}", accountId, newCookie.length());
                 return CaptchaResult.autoSuccess(newCookie);
             }
-            log.warn("账密登录恢复失败: accountId={}", accountId);
-        }
-
-        // 账密登录失败后进入人工扫码/更新 Cookie 兜底
-        log.warn("账密登录恢复失败，进入人工扫码/更新 Cookie 兜底: accountId={}", accountId);
-        if (xianyuSliderStealthService != null) {
-            XianyuSliderStealthService.SliderVerificationResult manualRecoveryResult =
-                    xianyuSliderStealthService.verify(accountId, cookieText, targetUrl, true);
-            if (manualRecoveryResult.isSuccess()
-                    && manualRecoveryResult.getCookieText() != null
-                    && !manualRecoveryResult.getCookieText().isBlank()) {
-                log.info("人工扫码/验证恢复成功: accountId={}, cookieLength={}",
-                        accountId, manualRecoveryResult.getCookieText().length());
-                return CaptchaResult.autoSuccess(manualRecoveryResult.getCookieText());
-            }
+            log.warn("账密登录恢复也失败: accountId={}", accountId);
         }
 
         return CaptchaResult.autoFailed();

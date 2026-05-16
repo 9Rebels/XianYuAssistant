@@ -1,6 +1,10 @@
 package com.feijimiao.xianyuassistant.service;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.microsoft.playwright.BrowserContext;
+import com.microsoft.playwright.CDPSession;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.options.Cookie;
 import com.microsoft.playwright.options.WaitUntilState;
@@ -10,6 +14,7 @@ import org.springframework.stereotype.Component;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -30,13 +35,15 @@ class PasswordLoginCookieVerifier {
     }
 
     LoginCookieCheck check(Long accountId, Page page, BrowserContext context) {
-        Map<String, String> cookieMap = collectCookieMap(context);
+        Map<String, String> cookieMap = collectCookieMap(page, context);
         if (!stateInspector.hasCompletedLoginCookies(cookieMap)) {
-            log.debug("[PasswordLogin] Cookie字段未齐全: missing={}",
-                    stateInspector.missingRequiredCookieFields(cookieMap));
-            return LoginCookieCheck.failed("Cookie字段未齐全");
+            List<String> missing = stateInspector.missingRequiredCookieFields(cookieMap);
+            log.info("[PasswordLogin] Cookie字段未齐全: accountId={}, missing={}, total={}",
+                    accountId, missing, cookieMap.size());
+            return LoginCookieCheck.failed("Cookie字段未齐全: " + missing);
         }
         if (!isServerSessionReady(accountId, page)) {
+            log.info("[PasswordLogin] Cookie齐全但服务端Session未就绪: accountId={}", accountId);
             return LoginCookieCheck.failed("服务端Session未就绪");
         }
         return LoginCookieCheck.success(formatCookies(cookieMap));
@@ -91,7 +98,12 @@ class PasswordLoginCookieVerifier {
         }
     }
 
-    private Map<String, String> collectCookieMap(BrowserContext context) {
+    private static final Set<String> RELEVANT_DOMAINS = Set.of(
+            ".goofish.com", ".taobao.com", ".tmall.com", ".alicdn.com",
+            "www.goofish.com", "h5api.m.goofish.com", "login.taobao.com", "www.taobao.com"
+    );
+
+    private Map<String, String> collectCookieMap(Page page, BrowserContext context) {
         Map<String, String> map = new LinkedHashMap<>();
         List<Cookie> cookies = context.cookies(List.of(
                 "https://www.goofish.com", "https://h5api.m.goofish.com",
@@ -99,7 +111,89 @@ class PasswordLoginCookieVerifier {
         for (Cookie c : cookies) {
             map.put(c.name, c.value);
         }
-        return map;
+        if (!map.isEmpty()) {
+            return map;
+        }
+        Map<String, String> cdpMap = collectCookieMapViaCdp(page, context);
+        if (!cdpMap.isEmpty()) {
+            return cdpMap;
+        }
+        return collectCookieMapViaJs(page);
+    }
+
+    private Map<String, String> collectCookieMapViaJs(Page page) {
+        if (page == null || page.isClosed()) {
+            return Map.of();
+        }
+        try {
+            Object result = page.evaluate("() => document.cookie");
+            if (result == null) return Map.of();
+            String cookieStr = result.toString();
+            if (cookieStr.isBlank()) return Map.of();
+            Map<String, String> map = new LinkedHashMap<>();
+            for (String pair : cookieStr.split(";")) {
+                String trimmed = pair.trim();
+                int eq = trimmed.indexOf('=');
+                if (eq > 0) {
+                    map.put(trimmed.substring(0, eq), trimmed.substring(eq + 1));
+                }
+            }
+            log.info("[PasswordLogin] JS获取Cookie: count={}", map.size());
+            return map;
+        } catch (Exception e) {
+            log.debug("[PasswordLogin] JS获取Cookie失败: {}", e.getMessage());
+            return Map.of();
+        }
+    }
+
+    private Map<String, String> collectCookieMapViaCdp(Page page, BrowserContext context) {
+        if (page == null || page.isClosed()) {
+            return Map.of();
+        }
+        CDPSession session = null;
+        try {
+            session = context.newCDPSession(page);
+            try { session.send("Network.enable"); } catch (Exception ignored) {}
+            JsonObject response = session.send("Network.getAllCookies");
+            JsonArray rawCookies = response == null ? null : response.getAsJsonArray("cookies");
+            if (rawCookies == null || rawCookies.isEmpty()) {
+                log.info("[PasswordLogin] CDP获取Cookie为空: response={}", response);
+                return Map.of();
+            }
+            Map<String, String> result = new LinkedHashMap<>();
+            for (JsonElement element : rawCookies) {
+                if (!element.isJsonObject()) continue;
+                JsonObject cookie = element.getAsJsonObject();
+                String domain = jsonStr(cookie, "domain");
+                if (domain == null || !isRelevantDomain(domain)) continue;
+                String name = jsonStr(cookie, "name");
+                String value = jsonStr(cookie, "value");
+                if (name != null && !name.isBlank() && value != null && !value.isBlank()) {
+                    result.put(name, value);
+                }
+            }
+            log.info("[PasswordLogin] CDP获取Cookie: total={}, relevant={}", rawCookies.size(), result.size());
+            return result;
+        } catch (Exception e) {
+            log.warn("[PasswordLogin] CDP获取Cookie失败: {}", e.getMessage());
+            return Map.of();
+        } finally {
+            if (session != null) {
+                try { session.detach(); } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    private boolean isRelevantDomain(String domain) {
+        for (String d : RELEVANT_DOMAINS) {
+            if (domain.equals(d) || domain.endsWith(d)) return true;
+        }
+        return false;
+    }
+
+    private String jsonStr(JsonObject obj, String key) {
+        JsonElement el = obj.get(key);
+        return el != null && !el.isJsonNull() ? el.getAsString() : null;
     }
 
     private String formatCookies(Map<String, String> cookieMap) {

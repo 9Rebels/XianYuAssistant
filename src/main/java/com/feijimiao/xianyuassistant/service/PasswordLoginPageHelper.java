@@ -34,28 +34,46 @@ class PasswordLoginPageHelper {
     );
 
     Frame findLoginFrame(Page page) {
+        return findLoginFrameWithRetry(page, 10_000, 800);
+    }
+
+    /**
+     * 轮询查找登录frame。goofish.com/im 的登录弹窗 iframe 由 SPA 动态创建，
+     * DOMContentLoaded 后仍需等待 JS 渲染，必须轮询而非单次检查。
+     */
+    private Frame findLoginFrameWithRetry(Page page, long timeoutMs, long pollIntervalMs) {
         page.waitForTimeout(1000);
-        List<Frame> frames = page.frames();
-        log.info("[PasswordLogin] 页面共有 {} 个frame", frames.size());
-
-        for (Frame frame : frames) {
-            if (frame == page.mainFrame()) {
-                continue;
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        int pollCount = 0;
+        while (System.currentTimeMillis() < deadline) {
+            pollCount++;
+            List<Frame> frames = page.frames();
+            if (pollCount == 1 || pollCount % 3 == 0) {
+                log.info("[PasswordLogin] 第{}次轮询查找登录frame, 共{}个frame", pollCount, frames.size());
             }
-            try {
-                String frameUrl = frame.url();
-                log.debug("[PasswordLogin] 检查frame: {}", frameUrl);
-                if (findAccountInput(frame) != null) {
-                    log.info("[PasswordLogin] 在iframe中找到登录表单: {}", frameUrl);
-                    return frame;
+            for (Frame frame : frames) {
+                if (frame == page.mainFrame()) {
+                    continue;
                 }
-            } catch (Exception ignored) {}
+                try {
+                    if (findAccountInput(frame) != null) {
+                        log.info("[PasswordLogin] 在iframe中找到登录表单: {}", frame.url());
+                        return frame;
+                    }
+                } catch (Exception ignored) {}
+            }
+            if (findFirst(page, ACCOUNT_SELECTORS) != null) {
+                log.info("[PasswordLogin] 在主页面找到登录表单");
+                return page.mainFrame();
+            }
+            // 也检查是否有滑块（有登录态时直接弹滑块，没有登录表单）
+            if (hasSliderInAnyFrame(page)) {
+                log.info("[PasswordLogin] 轮询中检测到滑块（可能有登录态），返回主frame");
+                return page.mainFrame();
+            }
+            page.waitForTimeout(pollIntervalMs);
         }
-
-        if (findFirst(page, ACCOUNT_SELECTORS) != null) {
-            log.info("[PasswordLogin] 在主页面找到登录表单");
-            return page.mainFrame();
-        }
+        log.warn("[PasswordLogin] 轮询{}次后仍未找到登录frame", pollCount);
         return null;
     }
 

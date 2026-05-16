@@ -26,12 +26,12 @@ import java.util.stream.Stream;
 public class SliderAutoVerifyService {
     private static final int MAX_RETRIES = 5;
     private static final double MIN_DISTANCE = 40D;
-    private static final double RETRY_2_MIN_DELAY_MS = 12000D;
-    private static final double RETRY_2_MAX_DELAY_MS = 18000D;
-    private static final double RETRY_3_MIN_DELAY_MS = 18000D;
-    private static final double RETRY_3_MAX_DELAY_MS = 25000D;
-    private static final double LATE_RETRY_MIN_DELAY_MS = 25000D;
-    private static final double LATE_RETRY_MAX_DELAY_MS = 35000D;
+    private static final double RETRY_2_MIN_DELAY_MS = 3000D;
+    private static final double RETRY_2_MAX_DELAY_MS = 5000D;
+    private static final double RETRY_3_MIN_DELAY_MS = 5000D;
+    private static final double RETRY_3_MAX_DELAY_MS = 8000D;
+    private static final double LATE_RETRY_MIN_DELAY_MS = 8000D;
+    private static final double LATE_RETRY_MAX_DELAY_MS = 12000D;
     private static final int FAILURE_SCREENSHOT_TIMEOUT_MS = 5000;
     private static final DateTimeFormatter SCREENSHOT_TS = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS");
     private static final ExecutorService FAILURE_CAPTURE_EXECUTOR = Executors.newSingleThreadExecutor(runnable -> {
@@ -174,13 +174,21 @@ public class SliderAutoVerifyService {
 
     private void warmup(Page page) {
         try {
-            page.waitForTimeout(randomBetween(1000, 1800));
-            page.mouse().move(randomBetween(260, 520), randomBetween(180, 360),
-                    new com.microsoft.playwright.Mouse.MoveOptions().setSteps(randomInt(8, 16)));
-            page.waitForTimeout(randomBetween(180, 420));
-            page.mouse().move(randomBetween(760, 1080), randomBetween(320, 620),
-                    new com.microsoft.playwright.Mouse.MoveOptions().setSteps(randomInt(12, 24)));
-            page.waitForTimeout(randomBetween(240, 620));
+            page.waitForTimeout(randomBetween(2800, 4200));
+            int moveCount = randomInt(2, 4);
+            for (int i = 0; i < moveCount; i++) {
+                moveWithoutSteps(page, randomBetween(320, 1220), randomBetween(220, 700));
+                page.waitForTimeout(randomBetween(80, 220));
+            }
+            if (ThreadLocalRandom.current().nextDouble() < 0.35) {
+                page.mouse().wheel(0, randomBetween(60, 180));
+                page.waitForTimeout(randomBetween(300, 600));
+                if (ThreadLocalRandom.current().nextDouble() < 0.5) {
+                    page.mouse().wheel(0, -randomBetween(40, 120));
+                    page.waitForTimeout(randomBetween(200, 400));
+                }
+            }
+            page.waitForTimeout(randomBetween(350, 800));
         } catch (Exception e) {
             log.debug("验证码页预热失败，继续滑块处理: {}", e.getMessage());
         }
@@ -225,11 +233,9 @@ public class SliderAutoVerifyService {
                 return simulateSlideWithXdotool(page, xdotool, startX, startY, button, plan, attempt, tempoSeed, tempoBase);
             }
 
-            page.mouse().move(startX + randomBetween(-25, -20), startY + randomBetween(12, 18),
-                    new com.microsoft.playwright.Mouse.MoveOptions().setSteps(randomInt(8, 10)));
+            moveWithoutSteps(page, startX + randomBetween(-25, -20), startY + randomBetween(12, 18));
             page.waitForTimeout(randomBetween(50, 150) * tempo(tempoSeed, tempoBase, 1));
-            page.mouse().move(startX, startY,
-                    new com.microsoft.playwright.Mouse.MoveOptions().setSteps(randomInt(8, 10)));
+            moveWithoutSteps(page, startX, startY);
             page.waitForTimeout(randomBetween(70, 120) * tempo(tempoSeed, tempoBase, 2));
             hoverButton(button, attempt);
             PointerOrigin origin = recalibrateStartPoint(startX, startY, button);
@@ -403,10 +409,28 @@ public class SliderAutoVerifyService {
         double dx = point.getX() - lastX;
         double dy = point.getY() - lastY;
         double segmentDistance = Math.sqrt(dx * dx + dy * dy);
-        int steps = Math.max(2, (int) Math.round(segmentDistance / randomBetween(2.5D, 4.5D)));
-        steps = Math.min(steps, 12);
-        page.mouse().move(startX + point.getX(), startY + point.getY(),
-                new com.microsoft.playwright.Mouse.MoveOptions().setSteps(steps));
+        double targetX = startX + point.getX();
+        double targetY = startY + point.getY();
+        if (segmentDistance > 30D) {
+            int subSteps = Math.max(2, (int) (segmentDistance / 15D));
+            double fromX = startX + lastX;
+            double fromY = startY + lastY;
+            for (int j = 1; j <= subSteps; j++) {
+                double t = (double) j / subSteps;
+                double subX = fromX + (targetX - fromX) * t;
+                double subY = fromY + (targetY - fromY) * t;
+                page.mouse().move(subX, subY);
+                page.waitForTimeout(randomBetween(1D, 3D));
+            }
+        } else {
+            page.mouse().move(targetX, targetY);
+        }
+    }
+
+    private void moveWithoutSteps(Page page, double targetX, double targetY) {
+        try {
+            page.mouse().move(targetX, targetY);
+        } catch (Exception ignored) {}
     }
 
     private void waitBeforeRetry(Page page, int attempt) {

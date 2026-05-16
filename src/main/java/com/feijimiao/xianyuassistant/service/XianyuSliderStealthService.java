@@ -5,6 +5,7 @@ import com.feijimiao.xianyuassistant.sse.SseEventBus;
 import com.microsoft.playwright.Browser;
 import com.microsoft.playwright.BrowserContext;
 import com.microsoft.playwright.BrowserType;
+import com.microsoft.playwright.CDPSession;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.Response;
 import com.microsoft.playwright.options.Cookie;
@@ -80,9 +81,17 @@ public class XianyuSliderStealthService {
         try (com.microsoft.playwright.Playwright playwright = com.microsoft.playwright.Playwright.create();
              BrowserSession session = launchBrowserSession(playwright, accountId, browserProfile)) {
             BrowserContext context = session.getContext();
-            context.addInitScript(sliderBrowserFingerprintService.stealthScript(browserProfile));
+            boolean isPunishUrl = targetUrl != null
+                    && (targetUrl.contains("punish") || targetUrl.contains("x5secdata"));
+            // punish URL 场景将导航到 /im 让滑块以弹窗形式触发，
+            // fullStealthScript 会导致 /im SPA 白屏，仅用 CDP 最小脚本
+            if (!isPunishUrl) {
+                context.addInitScript(sliderBrowserFingerprintService.stealthScript(browserProfile));
+            }
             injectInitialCookies(context, initialCookieText);
             Page page = context.newPage();
+            // connectOverCDP 模式下 addInitScript 对 iframe 无效，通过 CDP 原生协议注入
+            injectStealthViaCDP(page);
             if (session.getExternalLauncher() == null) {
                 sliderBrowserFingerprintService.applyNetworkFingerprint(context, page, browserProfile);
             }
@@ -111,6 +120,19 @@ public class XianyuSliderStealthService {
                                                          boolean allowManualRecovery) {
         warmupContext(page, targetUrl);
         navigateToCaptchaPage(page, targetUrl);
+
+        // punish URL 场景导航到 /im：如果 /im 页面已正常加载（有登录态），直接提取 cookie 返回
+        boolean isPunishUrl = targetUrl != null
+                && (targetUrl.contains("punish") || targetUrl.contains("x5secdata"));
+        if (isPunishUrl) {
+            String jsCookie = extractPageCookie(page);
+            if (jsCookie != null && !jsCookie.isBlank() && jsCookie.contains("unb=")) {
+                log.info("[SliderStealth] /im页面已有登录态，直接提取Cookie返回: accountId={}, length={}",
+                        accountId, jsCookie.length());
+                return SliderVerificationResult.success(jsCookie, null, java.util.Collections.emptyMap());
+            }
+        }
+
         simulateHumanWarmup(page);
         Map<String, String> cookieBaseline = sliderCookieRefreshVerifier.snapshotCookies(
                 context, page, observedSetCookieUpdates);
@@ -615,6 +637,31 @@ public class XianyuSliderStealthService {
     }
 
     private void navigateToCaptchaPage(Page page, String targetUrl) {
+        boolean isPunishUrl = targetUrl != null
+                && (targetUrl.contains("punish") || targetUrl.contains("x5secdata"));
+        if (isPunishUrl) {
+            // punish URL 直接导航会呈现全页面滑块（和正常用户体验不同，易被检测）。
+            // 导航到 /im，然后通过 fetch 触发 token 请求让滑块弹窗自然出现。
+            log.info("检测到punish URL，导航到/im让滑块弹窗自然触发");
+            try {
+                page.navigate(IM_URL, new Page.NavigateOptions()
+                        .setWaitUntil(WaitUntilState.DOMCONTENTLOADED)
+                        .setTimeout(30000));
+                page.waitForTimeout(randomBetween(3000, 5000));
+                // 在 /im 页面内 fetch token API 触发滑块弹窗
+                triggerSliderViaFetch(page);
+                // 轮询等待滑块弹窗出现
+                boolean sliderAppeared = waitForSliderPopup(page, 20000);
+                if (sliderAppeared) {
+                    log.info("/im页面滑块弹窗已出现");
+                } else {
+                    log.warn("/im页面20秒内未出现滑块弹窗，继续尝试后续流程");
+                }
+            } catch (Exception e) {
+                log.warn("/im页面加载失败: {}", e.getMessage());
+            }
+            return;
+        }
         try {
             page.navigate(targetUrl, new Page.NavigateOptions()
                     .setWaitUntil(WaitUntilState.DOMCONTENTLOADED)
@@ -625,12 +672,110 @@ public class XianyuSliderStealthService {
         }
     }
 
+    /**
+     * 在 /im 页面内请求 token API 触发服务端返回 punish 验证，
+     * 页面 JS 会拦截并弹出滑块模态框。
+     */
+    private void triggerSliderViaFetch(Page page) {
+        try {
+            page.evaluate(
+                    "() => fetch('https://h5api.m.goofish.com/h5/mtop.taobao.idlemessage.pc.login.token/1.0/"
+                            + "?jsv=2.7.2&appKey=34839810&type=originaljson&dataType=json&v=1.0"
+                            + "&api=mtop.taobao.idlemessage.pc.login.token&sessionOption=AutoLoginOnly',"
+                            + " {credentials:'include'}).catch(() => null)");
+        } catch (Exception e) {
+            log.debug("triggerSliderViaFetch异常（预期内）: {}", e.getMessage());
+        }
+    }
+
+    private String extractPageCookie(Page page) {
+        try {
+            // 先尝试 document.cookie（非httpOnly的cookie）
+            Object jsResult = page.evaluate("() => document.cookie");
+            String jsCookie = jsResult != null ? jsResult.toString() : "";
+
+            // 补充 context.cookies()（含httpOnly的cookie）
+            StringBuilder sb = new StringBuilder(jsCookie);
+            try {
+                var contextCookies = page.context().cookies();
+                for (var c : contextCookies) {
+                    String pair = c.name + "=" + c.value;
+                    if (!sb.toString().contains(c.name + "=")) {
+                        if (!sb.isEmpty()) sb.append("; ");
+                        sb.append(pair);
+                    }
+                }
+            } catch (Exception ignored) {}
+
+            // 再通过 CDP 获取完整 cookie（connectOverCDP 模式下 context.cookies 可能不完整）
+            try {
+                CDPSession cdp = page.context().newCDPSession(page);
+                try {
+                    var result = cdp.send("Network.getAllCookies");
+                    if (result != null) {
+                        var cookies = result.getAsJsonArray("cookies");
+                        if (cookies != null) {
+                            for (var elem : cookies) {
+                                var obj = elem.getAsJsonObject();
+                                String name = obj.get("name").getAsString();
+                                String value = obj.get("value").getAsString();
+                                if (!sb.toString().contains(name + "=")) {
+                                    if (!sb.isEmpty()) sb.append("; ");
+                                    sb.append(name).append("=").append(value);
+                                }
+                            }
+                        }
+                    }
+                } finally {
+                    try { cdp.detach(); } catch (Exception ignored) {}
+                }
+            } catch (Exception ignored) {}
+
+            String cookie = sb.toString();
+            log.info("[SliderStealth] extractPageCookie: length={}, hasUnb={}", cookie.length(), cookie.contains("unb="));
+            return cookie.isBlank() ? null : cookie;
+        } catch (Exception e) {
+            log.debug("[SliderStealth] extractPageCookie异常: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 轮询等待滑块弹窗出现（/im SPA 动态渲染，需要等 JS 执行完毕）。
+     */
+    private boolean waitForSliderPopup(Page page, long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        String[] sliderSelectors = {"#nc_1_n1z", ".nc-container", ".nc_scale", ".btn_slide", ".sm-btn"};
+        while (System.currentTimeMillis() < deadline) {
+            for (com.microsoft.playwright.Frame frame : page.frames()) {
+                for (String selector : sliderSelectors) {
+                    try {
+                        var el = frame.querySelector(selector);
+                        if (el != null && el.isVisible()) {
+                            return true;
+                        }
+                    } catch (Exception ignored) {}
+                }
+            }
+            page.waitForTimeout(800);
+        }
+        return false;
+    }
+
     private void simulateHumanWarmup(Page page) {
         page.waitForTimeout(randomBetween(2800, 4200));
-        for (int i = 0; i < randomInt(2, 4); i++) {
-            page.mouse().move(randomBetween(320, 1220), randomBetween(220, 700),
-                    new com.microsoft.playwright.Mouse.MoveOptions().setSteps(randomInt(10, 24)));
+        int moveCount = randomInt(2, 4);
+        for (int i = 0; i < moveCount; i++) {
+            page.mouse().move(randomBetween(320, 1220), randomBetween(220, 700));
             page.waitForTimeout(randomBetween(80, 220));
+        }
+        if (ThreadLocalRandom.current().nextDouble() < 0.35) {
+            page.mouse().wheel(0, randomBetween(60, 180));
+            page.waitForTimeout(randomBetween(300, 600));
+            if (ThreadLocalRandom.current().nextDouble() < 0.5) {
+                page.mouse().wheel(0, -randomBetween(40, 120));
+                page.waitForTimeout(randomBetween(200, 400));
+            }
         }
         page.waitForTimeout(randomBetween(350, 800));
     }
@@ -700,6 +845,71 @@ public class XianyuSliderStealthService {
                 return "";
             }
         }
+    }
+
+    /**
+     * 通过 CDP 原生协议注入 WebGL 伪装 + Playwright 痕迹清除脚本。
+     * connectOverCDP 模式下 addInitScript 对 iframe 无效，必须用 CDP 注入。
+     */
+    private void injectStealthViaCDP(Page page) {
+        CDPSession cdpSession = null;
+        try {
+            cdpSession = page.context().newCDPSession(page);
+            com.google.gson.JsonObject params = new com.google.gson.JsonObject();
+            params.addProperty("source", minimalCdpStealthScript());
+            cdpSession.send("Page.addScriptToEvaluateOnNewDocument", params);
+            log.info("[SliderStealth] CDP注入反检测脚本成功");
+        } catch (Exception e) {
+            log.warn("[SliderStealth] CDP注入失败: {}", e.getMessage());
+        } finally {
+            if (cdpSession != null) {
+                try { cdpSession.detach(); } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    private String minimalCdpStealthScript() {
+        return """
+                (() => {
+                    const spoofRenderer = 'ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+                    const spoofVendor = 'Google Inc. (Intel)';
+                    const getParameterProto = WebGLRenderingContext.prototype.getParameter;
+                    const getParameter2Proto = (typeof WebGL2RenderingContext !== 'undefined')
+                        ? WebGL2RenderingContext.prototype.getParameter : null;
+                    function patchGetParameter(original) {
+                        return function(param) {
+                            const ext = this.getExtension('WEBGL_debug_renderer_info');
+                            if (ext) {
+                                if (param === ext.UNMASKED_RENDERER_WEBGL) return spoofRenderer;
+                                if (param === ext.UNMASKED_VENDOR_WEBGL) return spoofVendor;
+                            }
+                            if (param === 0x9246) return spoofRenderer;
+                            if (param === 0x9245) return spoofVendor;
+                            return original.call(this, param);
+                        };
+                    }
+                    WebGLRenderingContext.prototype.getParameter = patchGetParameter(getParameterProto);
+                    if (getParameter2Proto) {
+                        WebGL2RenderingContext.prototype.getParameter = patchGetParameter(getParameter2Proto);
+                    }
+                    Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => false, configurable: true });
+                    ['playwright','__playwright','__pw_manual','__pw_original','webdriver',
+                     '__webdriver_script_fn','__webdriver_evaluate','__webdriver_unwrapped',
+                     '__playwright_evaluation_script__','__pw_d'
+                    ].forEach(key => { try { delete window[key]; } catch(e) {} });
+                    const nativeToString = Function.prototype.toString;
+                    const spoofed = new Set([
+                        WebGLRenderingContext.prototype.getParameter,
+                        getParameter2Proto ? WebGL2RenderingContext.prototype.getParameter : null
+                    ].filter(Boolean));
+                    Function.prototype.toString = function() {
+                        if (spoofed.has(this)) return 'function getParameter() { [native code] }';
+                        if (this === Function.prototype.toString) return 'function toString() { [native code] }';
+                        return nativeToString.call(this);
+                    };
+                    spoofed.add(Function.prototype.toString);
+                })();
+                """;
     }
 
     private int randomBetween(int minInclusive, int maxExclusive) {
