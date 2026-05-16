@@ -13,10 +13,9 @@ import java.util.concurrent.ThreadLocalRandom;
 final class SliderTrajectoryPlanner {
     private static final int[] PERM = buildPermutation();
     private static final List<TrajectoryProfile> STRATEGIES = List.of(
-            new TrajectoryProfile("conservative", 1.01, 1.06, 28, 40, 10D, 20D, 1.80, 2.40, 0.80, 2.00, 0.08),
-            new TrajectoryProfile("standard", 1.03, 1.10, 22, 35, 6D, 15D, 1.50, 2.10, 1.20, 2.80, 0.57),
-            new TrajectoryProfile("aggressive", 1.06, 1.15, 18, 30, 4D, 12D, 1.30, 1.90, 1.50, 3.20, 0.35),
-            new TrajectoryProfile("rapid", 1.80, 2.20, 5, 8, 0.2D, 0.6D, 1.30, 1.80, 1.00, 3.00, 0.00)
+            new TrajectoryProfile("conservative", 1.02, 1.06, 28, 38, 8D, 14D, 1.80, 2.40, 0.80, 2.00, 0.30),
+            new TrajectoryProfile("standard", 1.03, 1.08, 22, 32, 6D, 10D, 1.50, 2.10, 1.00, 2.50, 0.50),
+            new TrajectoryProfile("aggressive", 1.05, 1.12, 18, 26, 4D, 8D, 1.30, 1.90, 1.20, 2.80, 0.20)
     );
 
     private SliderTrajectoryLearner learner;
@@ -46,7 +45,7 @@ final class SliderTrajectoryPlanner {
         ThreadLocalRandom random = ThreadLocalRandom.current();
         TrajectoryProfile profile = selectProfile(attempt, random);
         int baseSteps = random.nextInt(profile.getMinSteps(), profile.getMaxSteps() + 1);
-        int steps = profile.getMinOvershootRatio() > 1.5 ? baseSteps : fittsSteps(distance, baseSteps);
+        int steps = fittsSteps(distance, baseSteps);
         double overshootRatio = random.nextDouble(profile.getMinOvershootRatio(), profile.getMaxOvershootRatio());
         double baseDelayMs = random.nextDouble(profile.getMinBaseDelayMs(), profile.getMaxBaseDelayMs());
         double curve = random.nextDouble(profile.getMinAccelerationCurve(), profile.getMaxAccelerationCurve());
@@ -85,23 +84,26 @@ final class SliderTrajectoryPlanner {
                 }
             }
         }
-        // 第1次尝试：80% 概率使用 rapid（极速一气呵成，模拟人类"拖到最右边"的自然行为）
-        if (attempt == 1 && random.nextDouble() < 0.80) {
-            return STRATEGIES.get(3); // rapid
+        if (attempt == 1) {
+            // 第1次：60% standard, 25% conservative, 15% aggressive
+            double pick = random.nextDouble();
+            if (pick < 0.60) return STRATEGIES.get(1); // standard
+            if (pick < 0.85) return STRATEGIES.get(0); // conservative
+            return STRATEGIES.get(2); // aggressive
         }
         if (attempt == 2) {
-            // 第2次：50% rapid, 30% aggressive, 20% standard
+            // 第2次：40% conservative, 40% standard, 20% aggressive
             double pick = random.nextDouble();
-            if (pick < 0.50) return STRATEGIES.get(3); // rapid
-            if (pick < 0.80) return STRATEGIES.get(2); // aggressive
-            return STRATEGIES.get(1); // standard
+            if (pick < 0.40) return STRATEGIES.get(0); // conservative
+            if (pick < 0.80) return STRATEGIES.get(1); // standard
+            return STRATEGIES.get(2); // aggressive
         }
         if (attempt >= 3) {
-            // 第3次及以后：混合策略
+            // 第3次及以后：50% conservative, 30% standard, 20% aggressive
             double pick = random.nextDouble();
-            if (pick < 0.40) return STRATEGIES.get(3); // rapid
-            if (pick < 0.70) return STRATEGIES.get(2); // aggressive
-            return STRATEGIES.get(0); // conservative
+            if (pick < 0.50) return STRATEGIES.get(0); // conservative
+            if (pick < 0.80) return STRATEGIES.get(1); // standard
+            return STRATEGIES.get(2); // aggressive
         }
         return weightedStrategy(random);
     }
@@ -118,39 +120,11 @@ final class SliderTrajectoryPlanner {
         return STRATEGIES.get(1);
     }
 
-    private List<TrajectoryPoint> buildRapidPoints(double distance, int steps, double baseDelayMs,
-                                                   double curve, double yJitter, ThreadLocalRandom random) {
-        List<TrajectoryPoint> points = new ArrayList<>();
-        // 三次贝塞尔曲线控制点（和参考项目一致）
-        double p1 = distance * random.nextDouble(0.20, 0.35);
-        double p2 = distance * random.nextDouble(0.70, 0.85);
-        double ySeed = random.nextDouble(0, 1000);
-
-        for (int i = 1; i <= steps; i++) {
-            double t = (double) i / steps;
-            // ease-out: 开始快，结束慢
-            double eased = 1.0 - Math.pow(1.0 - t, curve);
-            // 三次贝塞尔
-            double b0 = Math.pow(1 - eased, 3) * 0;
-            double b1 = 3 * Math.pow(1 - eased, 2) * eased * p1;
-            double b2 = 3 * (1 - eased) * eased * eased * p2;
-            double b3 = Math.pow(eased, 3) * distance;
-            double x = b0 + b1 + b2 + b3 + random.nextDouble(-0.5, 0.5);
-            // Perlin Y 轴抖动
-            double y = perlinNoise1d(t * 4.0, ySeed) * yJitter * 0.65
-                    + perlinNoise1d(t * 8.0, ySeed + 500) * yJitter * 0.35;
-            // 延迟：中间快两端慢
-            double speedFactor = Math.max(0.1, Math.sin(t * Math.PI));
-            double delay = baseDelayMs / speedFactor + random.nextDouble(0, baseDelayMs * 0.3);
-            points.add(new TrajectoryPoint(x, y, delay));
-        }
-        return points;
-    }
 
     private int fittsSteps(double distance, int baseSteps) {
         double fittsFactor = Math.log(Math.max(1D, distance / 50D + 1D)) / Math.log(7D);
         int scaled = (int) Math.round(baseSteps * clamp(fittsFactor, 0.7D, 1.3D));
-        return (int) clamp(scaled, 18D, 45D);
+        return (int) clamp(scaled, 12D, 35D);
     }
 
     private List<TrajectoryPoint> buildPoints(double distance,
@@ -160,10 +134,6 @@ final class SliderTrajectoryPlanner {
                                               double curve,
                                               double yJitter,
                                               ThreadLocalRandom random) {
-        // rapid 模式：极速单向滑动，无回退，鼠标移动距离远超实际需要（模拟人类"用力一甩"）
-        if (overshootRatio > 1.5) {
-            return buildRapidPoints(distance * overshootRatio, steps, baseDelayMs, curve, yJitter, random);
-        }
         List<TrajectoryPoint> points = new ArrayList<>();
         double overshootTarget = distance * overshootRatio;
         int mainSteps = Math.max(14, (int) Math.round(steps * 0.75D));

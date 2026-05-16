@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.feijimiao.xianyuassistant.entity.XianyuCookie;
 import com.feijimiao.xianyuassistant.mapper.XianyuCookieMapper;
 import com.feijimiao.xianyuassistant.service.AccountIdentityGuard;
+import com.feijimiao.xianyuassistant.service.CookieStateService;
 import com.feijimiao.xianyuassistant.service.CookieRecoveryService;
 import com.feijimiao.xianyuassistant.service.CookieRefreshService;
 import com.feijimiao.xianyuassistant.service.XianyuApiRecoveryService;
@@ -42,6 +43,9 @@ public class XianyuApiRecoveryServiceImpl implements XianyuApiRecoveryService {
 
     @Autowired
     private AccountIdentityGuard accountIdentityGuard;
+
+    @Autowired
+    private CookieStateService cookieStateService;
 
     @Override
     public XianyuApiRecoveryResult callApi(XianyuApiRecoveryRequest request) {
@@ -237,9 +241,9 @@ public class XianyuApiRecoveryServiceImpl implements XianyuApiRecoveryService {
             return;
         }
         cookie.setCookieText(cookieText);
-        cookie.setCookieStatus(1);
         cookie.setUpdatedTime(LocalDateTime.now().format(DATETIME_FORMATTER));
         cookieMapper.updateById(cookie);
+        cookieStateService.markValid(accountId);
     }
 
     private void validateRequest(XianyuApiRecoveryRequest request) {

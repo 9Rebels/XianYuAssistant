@@ -1,6 +1,7 @@
 package com.feijimiao.xianyuassistant.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -132,7 +133,7 @@ public class XianyuAccount {
     private String loginPassword;
 
     /**
-     * 账号状态 1:正常 -1:需要手机号验证
+     * 账号状态 -2:需要人机验证 -1:需要手机号验证 1:正常
      */
     private Integer status;
     
@@ -145,4 +146,16 @@ public class XianyuAccount {
      * 更新时间（SQLite存储为TEXT）
      */
     private String updatedTime;
+
+    /**
+     * 状态变更原因。灰度字段：未执行DDL前不参与默认查询。
+     */
+    @TableField(select = false)
+    private String stateReason;
+
+    /**
+     * 状态变更时间。灰度字段：未执行DDL前不参与默认查询。
+     */
+    @TableField(select = false)
+    private String stateUpdatedTime;
 }

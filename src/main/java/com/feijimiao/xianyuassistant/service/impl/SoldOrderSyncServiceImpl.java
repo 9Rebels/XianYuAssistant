@@ -1,6 +1,5 @@
 package com.feijimiao.xianyuassistant.service.impl;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.feijimiao.xianyuassistant.entity.XianyuAccount;
@@ -8,8 +7,12 @@ import com.feijimiao.xianyuassistant.entity.XianyuCookie;
 import com.feijimiao.xianyuassistant.entity.XianyuOrder;
 import com.feijimiao.xianyuassistant.mapper.XianyuAccountMapper;
 import com.feijimiao.xianyuassistant.mapper.XianyuCookieMapper;
+import com.feijimiao.xianyuassistant.mapper.XianyuGoodsInfoMapper;
 import com.feijimiao.xianyuassistant.mapper.XianyuOrderMapper;
+import com.feijimiao.xianyuassistant.service.CookieRecoveryService;
+import com.feijimiao.xianyuassistant.service.SellerSessionRefreshService;
 import com.feijimiao.xianyuassistant.service.SoldOrderSyncService;
+import com.feijimiao.xianyuassistant.service.bo.CookieRecoveryResult;
 import com.feijimiao.xianyuassistant.utils.XianyuSignUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,8 +39,13 @@ public class SoldOrderSyncServiceImpl implements SoldOrderSyncService {
     private static final String API_VERSION = "1.0";
     private static final String APP_KEY = "34839810";
     private static final String SELLER_ORIGIN = "https://seller.goofish.com";
-    private static final String SELLER_REFERER = "https://seller.goofish.com/";
-    private static final String SPM_CNT = "a21ybx.home.0.0";
+    private static final String SELLER_REFERER =
+            "https://seller.goofish.com/?site=COMMONPRO#/seller-trade/order-manage";
+    private static final String SPM_CNT = "a21107h.42831410.0.0";
+    private static final String SESSION_EXPIRED_CODE = "FAIL_SYS_SESSION_EXPIRED";
+    private static final String SESSION_EXPIRED_MESSAGE =
+            "卖家订单接口 Session 过期，已尝试刷新/恢复Cookie后仍失败；这不等于连接管理Cookie无效，"
+                    + "请重新登录或刷新Cookie后再同步订单列表";
     private static final int PAGE_SIZE = 20;
     private static final int MAX_PAGES = 20;
     private static final DateTimeFormatter ORDER_TIME_FORMATTER =
@@ -52,6 +60,15 @@ public class SoldOrderSyncServiceImpl implements SoldOrderSyncService {
 
     @Autowired
     private XianyuOrderMapper orderMapper;
+
+    @Autowired
+    private XianyuGoodsInfoMapper goodsInfoMapper;
+
+    @Autowired
+    private CookieRecoveryService cookieRecoveryService;
+
+    @Autowired(required = false)
+    private SellerSessionRefreshService sellerSessionRefreshService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newHttpClient();
@@ -73,15 +90,27 @@ public class SoldOrderSyncServiceImpl implements SoldOrderSyncService {
         if (cookie == null || isBlank(cookie.getCookieText())) {
             throw new IllegalStateException("账号Cookie不存在");
         }
+        String cookieText = cookie.getCookieText();
 
         log.info("开始同步鱼小铺卖家订单: accountId={}", accountId);
         SyncResult totalResult = new SyncResult();
         String lastEndRow = "0";
         int pageNumber = 1;
+        boolean sessionRetryUsed = false;
 
         while (pageNumber <= MAX_PAGES) {
-            String response = requestSoldOrderPage(account, cookie.getCookieText(), pageNumber, lastEndRow);
-            PageSaveResult pageResult = saveOrdersFromResponse(account, response);
+            PageSaveResult pageResult;
+            try {
+                String response = requestSoldOrderPage(account, cookieText, pageNumber, lastEndRow);
+                pageResult = saveOrdersFromResponse(account, response);
+            } catch (SellerSessionExpiredException e) {
+                if (sessionRetryUsed) {
+                    throw new IllegalStateException(SESSION_EXPIRED_MESSAGE);
+                }
+                sessionRetryUsed = true;
+                cookieText = refreshCookieAfterSellerSessionExpired(accountId);
+                continue;
+            }
             mergeResult(totalResult, pageResult);
             totalResult.setPageCount(pageNumber);
             totalResult.setTotalCount(pageResult.totalCount());
@@ -101,7 +130,7 @@ public class SoldOrderSyncServiceImpl implements SoldOrderSyncService {
         return totalResult;
     }
 
-    private String requestSoldOrderPage(XianyuAccount account, String cookieText, int pageNumber, String lastEndRow) {
+    String requestSoldOrderPage(XianyuAccount account, String cookieText, int pageNumber, String lastEndRow) {
         try {
             String dataJson = objectMapper.writeValueAsString(buildPageData(account, pageNumber, lastEndRow));
             String timestamp = String.valueOf(System.currentTimeMillis());
@@ -150,7 +179,7 @@ public class SoldOrderSyncServiceImpl implements SoldOrderSyncService {
                 "Origin", SELLER_ORIGIN,
                 "Pragma", "no-cache",
                 "Referer", SELLER_REFERER,
-                "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+                "User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
                 "idle_site_biz_code", "COMMONPRO",
                 "idle_user_group_member_id", ""
         };
@@ -189,6 +218,9 @@ public class SoldOrderSyncServiceImpl implements SoldOrderSyncService {
         try {
             JsonNode root = objectMapper.readTree(responseBody);
             String retText = retText(root);
+            if (isSessionExpired(retText)) {
+                throw new SellerSessionExpiredException(retText);
+            }
             if (!retText.contains("SUCCESS")) {
                 throw new IllegalStateException("卖家订单接口返回异常: " + retText);
             }
@@ -203,6 +235,9 @@ public class SoldOrderSyncServiceImpl implements SoldOrderSyncService {
             int itemCount = 0;
             for (JsonNode item : items) {
                 if (isBlank(text(item.path("commonData").path("orderId")))) {
+                    continue;
+                }
+                if (isForeignAccountGoods(account, item)) {
                     continue;
                 }
                 boolean wasInserted = upsertOrder(account, item);
@@ -229,12 +264,64 @@ public class SoldOrderSyncServiceImpl implements SoldOrderSyncService {
         }
     }
 
+    private boolean isForeignAccountGoods(XianyuAccount account, JsonNode item) {
+        String itemId = text(item.path("commonData").path("itemId"));
+        if (account == null || account.getId() == null || isBlank(itemId) || goodsInfoMapper == null) {
+            return false;
+        }
+        Long ownerAccountId = goodsInfoMapper.selectOwnerAccountIdByGoodsId(itemId);
+        if (ownerAccountId == null || ownerAccountId.equals(account.getId())) {
+            return false;
+        }
+        String orderId = text(item.path("commonData").path("orderId"));
+        log.warn("【账号{}】跳过卖家订单：商品{}属于账号{}，orderId={}",
+                account.getId(), itemId, ownerAccountId, orderId);
+        return true;
+    }
+
+    private String refreshCookieAfterSellerSessionExpired(Long accountId) {
+        log.warn("【账号{}】卖家订单接口 Session 过期，开始刷新/恢复Cookie后重试一次", accountId);
+        CookieRecoveryResult recovery = cookieRecoveryService != null
+                ? cookieRecoveryService.recover(accountId, "同步卖家订单列表", "卖家订单接口 Session 过期")
+                : CookieRecoveryResult.failed("Cookie恢复服务不可用");
+        if (!recovery.isSuccess()) {
+            String message = recovery.getMessage();
+            throw new IllegalStateException("卖家订单接口 Session 过期，自动刷新/恢复Cookie失败"
+                    + (isBlank(message) ? "" : "：" + message)
+                    + "。请重新登录或刷新Cookie后再同步订单列表");
+        }
+        String recoveredCookie = recovery.getCookieText();
+        XianyuCookie cookie = cookieMapper.selectByAccountId(accountId);
+        if (cookie != null && !isBlank(cookie.getCookieText())) {
+            recoveredCookie = cookie.getCookieText();
+        }
+        if (isBlank(recoveredCookie)) {
+            throw new IllegalStateException(
+                    "卖家订单接口 Session 过期，Cookie刷新成功但重读失败，请重新同步后再试");
+        }
+        return refreshSellerSessionIfPossible(accountId, recoveredCookie);
+    }
+
+    private String refreshSellerSessionIfPossible(Long accountId, String recoveredCookie) {
+        if (sellerSessionRefreshService == null) {
+            return recoveredCookie;
+        }
+        CookieRecoveryResult sellerRecovery =
+                sellerSessionRefreshService.refreshSellerSession(accountId, recoveredCookie);
+        if (sellerRecovery != null && sellerRecovery.isSuccess() && !isBlank(sellerRecovery.getCookieText())) {
+            return sellerRecovery.getCookieText();
+        }
+        String message = sellerRecovery == null ? "无返回" : sellerRecovery.getMessage();
+        log.warn("【账号{}】卖家订单接口 Session 专用激活未成功: {}", accountId, message);
+        throw new IllegalStateException("卖家订单接口 Session 过期，"
+                + (isBlank(message) ? "卖家Session专用激活失败" : message)
+                + "；连接管理仍可能有效，请重新登录或刷新Cookie后再同步订单列表");
+    }
+
     private boolean upsertOrder(XianyuAccount account, JsonNode item) throws Exception {
         JsonNode commonData = item.path("commonData");
         String orderId = text(commonData.path("orderId"));
-        XianyuOrder order = orderMapper.selectOne(new LambdaQueryWrapper<XianyuOrder>()
-                .eq(XianyuOrder::getXianyuAccountId, account.getId())
-                .eq(XianyuOrder::getOrderId, orderId));
+        XianyuOrder order = orderMapper.selectByAccountIdAndOrderId(account.getId(), orderId);
         boolean inserted = order == null;
         if (inserted) {
             order = new XianyuOrder();
@@ -374,6 +461,10 @@ public class SoldOrderSyncServiceImpl implements SoldOrderSyncService {
         return ret.asText("");
     }
 
+    private boolean isSessionExpired(String retText) {
+        return retText != null && retText.contains(SESSION_EXPIRED_CODE);
+    }
+
     private Integer toInteger(String value) {
         try {
             return isBlank(value) ? null : Integer.parseInt(value.trim());
@@ -412,5 +503,11 @@ public class SoldOrderSyncServiceImpl implements SoldOrderSyncService {
 
     record PageSaveResult(int itemCount, int insertedCount, int updatedCount,
                           Integer totalCount, boolean nextPage, String lastEndRow) {
+    }
+
+    private static class SellerSessionExpiredException extends IllegalStateException {
+        SellerSessionExpiredException(String message) {
+            super(message);
+        }
     }
 }

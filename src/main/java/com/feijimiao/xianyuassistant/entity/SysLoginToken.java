@@ -26,11 +26,29 @@ public class SysLoginToken {
     /** 设备标识 */
     private String deviceId;
 
+    /** 设备名称 */
+    private String deviceName;
+
+    /** 浏览器名称 */
+    private String browserName;
+
+    /** 操作系统名称 */
+    private String osName;
+
+    /** User-Agent */
+    private String userAgent;
+
     /** 登录IP */
     private String loginIp;
 
     /** 过期时间 */
     private String expireTime;
+
+    /** 最后活跃时间 */
+    private String lastActiveTime;
+
+    /** 状态：1=有效，0=已退出，-1=已踢出 */
+    private Integer status;
 
     /** 创建时间 */
     private String createdTime;

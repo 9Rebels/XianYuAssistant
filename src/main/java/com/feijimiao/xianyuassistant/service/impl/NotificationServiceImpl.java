@@ -24,6 +24,7 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -550,7 +551,8 @@ public class NotificationServiceImpl implements NotificationService {
             sseEventBus.broadcast("notification", java.util.Map.of(
                     "eventType", eventType,
                     "title", title,
-                    "content", content.length() > 200 ? content.substring(0, 200) : content
+                    "content", content.length() > 200 ? content.substring(0, 200) : content,
+                    "accountId", Optional.ofNullable(resolveAccountId(content)).orElse(0L)
             ));
         } catch (Exception e) {
             log.debug("SSE通知推送异常: {}", e.getMessage());

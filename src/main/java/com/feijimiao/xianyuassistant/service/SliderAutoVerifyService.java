@@ -26,12 +26,12 @@ import java.util.stream.Stream;
 public class SliderAutoVerifyService {
     private static final int MAX_RETRIES = 5;
     private static final double MIN_DISTANCE = 40D;
-    private static final double RETRY_2_MIN_DELAY_MS = 4000D;
-    private static final double RETRY_2_MAX_DELAY_MS = 6000D;
-    private static final double RETRY_3_MIN_DELAY_MS = 6000D;
-    private static final double RETRY_3_MAX_DELAY_MS = 8000D;
-    private static final double LATE_RETRY_MIN_DELAY_MS = 7000D;
-    private static final double LATE_RETRY_MAX_DELAY_MS = 10000D;
+    private static final double RETRY_2_MIN_DELAY_MS = 12000D;
+    private static final double RETRY_2_MAX_DELAY_MS = 18000D;
+    private static final double RETRY_3_MIN_DELAY_MS = 18000D;
+    private static final double RETRY_3_MAX_DELAY_MS = 25000D;
+    private static final double LATE_RETRY_MIN_DELAY_MS = 25000D;
+    private static final double LATE_RETRY_MAX_DELAY_MS = 35000D;
     private static final int FAILURE_SCREENSHOT_TIMEOUT_MS = 5000;
     private static final DateTimeFormatter SCREENSHOT_TS = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS");
     private static final ExecutorService FAILURE_CAPTURE_EXECUTOR = Executors.newSingleThreadExecutor(runnable -> {
@@ -219,6 +219,12 @@ public class SliderAutoVerifyService {
             }
             double startX = buttonBox.x + buttonBox.width / 2;
             double startY = buttonBox.y + buttonBox.height / 2;
+
+            XdotoolMouseDriver xdotool = XdotoolMouseDriver.create(page);
+            if (xdotool != null) {
+                return simulateSlideWithXdotool(page, xdotool, startX, startY, button, plan, attempt, tempoSeed, tempoBase);
+            }
+
             page.mouse().move(startX + randomBetween(-25, -20), startY + randomBetween(12, 18),
                     new com.microsoft.playwright.Mouse.MoveOptions().setSteps(randomInt(8, 10)));
             page.waitForTimeout(randomBetween(50, 150) * tempo(tempoSeed, tempoBase, 1));
@@ -237,8 +243,7 @@ public class SliderAutoVerifyService {
             logFinalSliderPosition(button);
             page.waitForTimeout(randomBetween(10, 70) * tempo(tempoSeed, tempoBase, 6));
             page.mouse().up();
-            clickNearFinalPoint(page, startX, startY, plan.getPoints());
-            page.waitForTimeout(randomBetween(20, 60) * tempo(tempoSeed, tempoBase, 7));
+            page.waitForTimeout(randomBetween(80, 200) * tempo(tempoSeed, tempoBase, 7));
             page.waitForTimeout(serverJudgeWait(attempt) * Math.max(1D, Math.min(1.2D, tempo(tempoSeed, tempoBase, 8))));
             return true;
         } catch (Exception e) {
@@ -248,6 +253,53 @@ public class SliderAutoVerifyService {
             } catch (Exception ignored) {
             }
             return false;
+        }
+    }
+
+    private boolean simulateSlideWithXdotool(Page page,
+                                             XdotoolMouseDriver xdotool,
+                                             double startX,
+                                             double startY,
+                                             ElementHandle button,
+                                             SliderTrajectoryPlanner.TrajectoryPlan plan,
+                                             int attempt,
+                                             double tempoSeed,
+                                             double tempoBase) {
+        log.info("使用xdotool OS级输入模拟滑块拖动");
+        xdotool.moveTo(startX + randomBetween(-20, -10), startY + randomBetween(8, 15));
+        xdotool.sleepMs((long) randomBetween(80, 180));
+        xdotool.moveTo(startX, startY);
+        xdotool.sleepMs((long) randomBetween(100, 200));
+        PointerOrigin origin = recalibrateStartPoint(startX, startY, button);
+        startX = origin.x();
+        startY = origin.y();
+        xdotool.moveTo(startX, startY);
+        xdotool.sleepMs((long) randomBetween(80, 150));
+        xdotool.mouseDown();
+        xdotool.sleepMs((long) randomBetween(80, 150));
+        moveTrajectoryXdotool(xdotool, startX, startY, plan.getPoints());
+        logFinalSliderPosition(button);
+        xdotool.sleepMs((long) randomBetween(20, 80));
+        xdotool.mouseUp();
+        page.waitForTimeout(serverJudgeWait(attempt) * Math.max(1D, Math.min(1.2D, tempo(tempoSeed, tempoBase, 8))));
+        return true;
+    }
+
+    private void moveTrajectoryXdotool(XdotoolMouseDriver xdotool,
+                                       double startX,
+                                       double startY,
+                                       List<SliderTrajectoryPlanner.TrajectoryPoint> trajectory) {
+        int total = trajectory.size();
+        for (int i = 0; i < total; i++) {
+            SliderTrajectoryPlanner.TrajectoryPoint point = trajectory.get(i);
+            xdotool.moveTo(startX + point.getX(), startY + point.getY());
+            long delay = Math.round(point.getDelayMs());
+            if (delay > 0) {
+                xdotool.sleepMs(delay);
+            }
+            if (shouldHesitate(i, total)) {
+                xdotool.sleepMs((long) randomBetween(20D, 60D));
+            }
         }
     }
 
@@ -308,26 +360,13 @@ public class SliderAutoVerifyService {
             moveToPoint(page, startX, startY, lastX, lastY, point);
             lastX = point.getX();
             lastY = point.getY();
-            double actualDelay = point.getDelayMs() * randomBetween(0.85, 1.16);
-            if (shouldHesitate(i, total)) {
-                actualDelay += randomBetween(10D, 40D);
+            double delay = point.getDelayMs();
+            if (delay > 1D) {
+                page.waitForTimeout(delay);
             }
-            page.waitForTimeout(actualDelay);
-        }
-    }
-
-    private void clickNearFinalPoint(Page page,
-                                     double startX,
-                                     double startY,
-                                     List<SliderTrajectoryPlanner.TrajectoryPoint> trajectory) {
-        if (page == null || trajectory == null || trajectory.isEmpty()) {
-            return;
-        }
-        SliderTrajectoryPlanner.TrajectoryPoint finalPoint = trajectory.get(trajectory.size() - 1);
-        try {
-            page.mouse().click(startX + finalPoint.getX(), startY + finalPoint.getY());
-        } catch (Exception e) {
-            log.debug("滑块末端 click 事件触发失败: {}", e.getMessage());
+            if (shouldHesitate(i, total)) {
+                page.waitForTimeout(randomBetween(20D, 60D));
+            }
         }
     }
 
@@ -363,17 +402,11 @@ public class SliderAutoVerifyService {
                              SliderTrajectoryPlanner.TrajectoryPoint point) {
         double dx = point.getX() - lastX;
         double dy = point.getY() - lastY;
-        double moveDistance = Math.sqrt(dx * dx + dy * dy);
-        if (moveDistance <= 30D) {
-            page.mouse().move(startX + point.getX(), startY + point.getY());
-            return;
-        }
-        int subSteps = Math.max(2, (int) Math.ceil(moveDistance / 15D));
-        for (int i = 1; i <= subSteps; i++) {
-            double progress = (double) i / subSteps;
-            page.mouse().move(startX + lastX + dx * progress, startY + lastY + dy * progress);
-            page.waitForTimeout(randomBetween(1, 4));
-        }
+        double segmentDistance = Math.sqrt(dx * dx + dy * dy);
+        int steps = Math.max(2, (int) Math.round(segmentDistance / randomBetween(2.5D, 4.5D)));
+        steps = Math.min(steps, 12);
+        page.mouse().move(startX + point.getX(), startY + point.getY(),
+                new com.microsoft.playwright.Mouse.MoveOptions().setSteps(steps));
     }
 
     private void waitBeforeRetry(Page page, int attempt) {

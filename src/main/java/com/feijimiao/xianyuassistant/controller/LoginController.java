@@ -70,6 +70,9 @@ public class LoginController {
             RegisterReqBO reqBO = new RegisterReqBO();
             reqBO.setUsername(reqDTO.getUsername().trim());
             reqBO.setPassword(reqDTO.getPassword());
+            reqBO.setIp(getClientIp(request));
+            reqBO.setDeviceId(buildDeviceId(request));
+            reqBO.setUserAgent(buildUserAgent(request));
 
             LoginRespBO respBO = authService.register(reqBO);
 
@@ -104,16 +107,12 @@ public class LoginController {
                 return ResultObject.validateFailed("密码不能为空");
             }
 
-            String deviceId = request.getHeader("User-Agent");
-            if (deviceId != null && deviceId.length() > 100) {
-                deviceId = deviceId.substring(0, 100);
-            }
-
             LoginReqBO reqBO = new LoginReqBO();
             reqBO.setUsername(reqDTO.getUsername().trim());
             reqBO.setPassword(reqDTO.getPassword());
             reqBO.setIp(ip);
-            reqBO.setDeviceId(deviceId);
+            reqBO.setDeviceId(buildDeviceId(request));
+            reqBO.setUserAgent(buildUserAgent(request));
 
             LoginRespBO respBO = authService.login(reqBO);
 
@@ -167,5 +166,21 @@ public class LoginController {
             ip = ip.split(",")[0].trim();
         }
         return ip;
+    }
+
+    private String buildDeviceId(HttpServletRequest request) {
+        String userAgent = buildUserAgent(request);
+        if (userAgent == null) {
+            return null;
+        }
+        return userAgent.length() > 100 ? userAgent.substring(0, 100) : userAgent;
+    }
+
+    private String buildUserAgent(HttpServletRequest request) {
+        String userAgent = request.getHeader("User-Agent");
+        if (userAgent == null) {
+            return null;
+        }
+        return userAgent.length() > 500 ? userAgent.substring(0, 500) : userAgent;
     }
 }

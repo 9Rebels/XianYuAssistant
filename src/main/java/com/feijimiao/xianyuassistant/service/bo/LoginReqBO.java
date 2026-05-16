@@ -13,4 +13,5 @@ public class LoginReqBO {
     private String password;
     private String ip;
     private String deviceId;
+    private String userAgent;
 }

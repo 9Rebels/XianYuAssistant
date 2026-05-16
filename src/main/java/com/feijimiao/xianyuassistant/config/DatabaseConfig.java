@@ -98,11 +98,21 @@ public class DatabaseConfig {
                     String cleanSql = removeComments(sqlStatement.trim());
                     
                     if (!cleanSql.isEmpty()) {
+                        if (isDeferredSchemaStatement(cleanSql)) {
+                            log.info("跳过需迁移后执行的SQL，启动后由DatabaseInitListener补齐: {}",
+                                    cleanSql.substring(0, Math.min(120, cleanSql.length())));
+                            continue;
+                        }
                         try {
                             stmt.execute(cleanSql);
                             executedCount++;
                             log.debug("执行SQL成功: {}", cleanSql.substring(0, Math.min(50, cleanSql.length())));
                         } catch (Exception e) {
+                            if (isDeferredSchemaMigration(cleanSql, e)) {
+                                log.info("跳过依赖待补字段的SQL，启动后由DatabaseInitListener补齐: {}",
+                                        cleanSql.substring(0, Math.min(120, cleanSql.length())));
+                                continue;
+                            }
                             log.error("执行SQL失败: {}", cleanSql, e);
                             throw e;
                         }
@@ -123,6 +133,23 @@ public class DatabaseConfig {
             log.error("初始化数据库失败", e);
             throw new RuntimeException("初始化数据库失败: " + e.getMessage(), e);
         }
+    }
+
+    private boolean isDeferredSchemaStatement(String sql) {
+        String normalizedSql = sql == null ? "" : sql.toUpperCase();
+        return normalizedSql.startsWith("CREATE INDEX");
+    }
+
+    private boolean isDeferredSchemaMigration(String sql, Exception e) {
+        String normalizedSql = sql == null ? "" : sql.toUpperCase();
+        String message = e.getMessage();
+        if (message == null) return false;
+        // CREATE INDEX 引用了尚未添加的列，启动后由 DatabaseInitListener 补齐
+        if (normalizedSql.startsWith("CREATE INDEX") && message.contains("no such column")) {
+            return true;
+        }
+        return normalizedSql.startsWith("CREATE INDEX")
+                && (message.contains("state_reason") || message.contains("state_updated_time"));
     }
 
     /**

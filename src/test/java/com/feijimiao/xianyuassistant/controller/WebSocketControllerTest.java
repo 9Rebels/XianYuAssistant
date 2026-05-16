@@ -9,6 +9,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationContext;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -119,5 +121,35 @@ class WebSocketControllerTest {
                 eq(1), eq("COOKIE"), eq("18"),
                 any(), any(), any(), any()
         );
+    }
+
+    @Test
+    void pendingManualVerificationReturnsServerPendingState() {
+        WebSocketController controller = new WebSocketController();
+        ApplicationContext applicationContext = mock(ApplicationContext.class);
+        PasswordLoginService passwordLoginService = mock(PasswordLoginService.class);
+        PasswordLoginService.ManualVerificationState state =
+                new PasswordLoginService.ManualVerificationState(
+                        3L,
+                        "滑块硬拒绝",
+                        "需要人工处理",
+                        "验证失败",
+                        "/api/captcha/debug-image/latest?xianyuAccountId=3&v=100",
+                        1778867000000L,
+                        300
+                );
+
+        ReflectionTestUtils.setField(controller, "applicationContext", applicationContext);
+        when(applicationContext.getBean(PasswordLoginService.class)).thenReturn(passwordLoginService);
+        when(passwordLoginService.pendingManualVerifications()).thenReturn(List.of(state));
+
+        ResultObject<List<PasswordLoginService.ManualVerificationState>> result =
+                controller.pendingManualVerification();
+
+        assertEquals(200, result.getCode());
+        assertEquals(1, result.getData().size());
+        assertEquals(3L, result.getData().get(0).getAccountId());
+        assertEquals("滑块硬拒绝", result.getData().get(0).getVerificationType());
+        verify(passwordLoginService).pendingManualVerifications();
     }
 }

@@ -12,8 +12,8 @@ import org.apache.ibatis.annotations.Select;
 public interface XianyuCookieMapper extends BaseMapper<XianyuCookie> {
 
     /**
-     * 根据账号ID查询Cookie
+     * 根据账号ID查询最新Cookie
      */
-    @Select("SELECT * FROM xianyu_cookie WHERE xianyu_account_id = #{accountId} LIMIT 1")
+    @Select("SELECT * FROM xianyu_cookie WHERE xianyu_account_id = #{accountId} ORDER BY created_time DESC LIMIT 1")
     XianyuCookie selectByAccountId(Long accountId);
 }

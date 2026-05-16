@@ -161,13 +161,9 @@ public class OrderController {
 
             // 验证订单归属（安全加固）
             for (String orderId : orderIds) {
-                XianyuOrder existingOrder = xianyuOrderMapper.selectOne(
-                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<XianyuOrder>()
-                        .eq(XianyuOrder::getOrderId, orderId)
-                );
+                XianyuOrder existingOrder = xianyuOrderMapper.selectByAccountIdAndOrderId(accountId, orderId);
 
-                // 如果订单已存在，验证是否属于该账号
-                if (existingOrder != null && !existingOrder.getXianyuAccountId().equals(accountId)) {
+                if (existingOrder != null && !accountId.equals(existingOrder.getXianyuAccountId())) {
                     log.warn("订单归属验证失败: orderId={}, 期望accountId={}, 实际accountId={}",
                         orderId, accountId, existingOrder.getXianyuAccountId());
                     return ResultObject.failed("订单 " + orderId + " 不属于该账号");

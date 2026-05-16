@@ -61,6 +61,8 @@ RUN mkdir -p /app/dbdata/captcha-debug /app/logs /app/browser_data
 # Chromium 运行时依赖 + Xvfb + 中文字体 + locale
 RUN apt-get update && apt-get install -y --no-install-recommends \
         xvfb \
+        xdotool \
+        psmisc \
         dbus \
         ca-certificates \
         tzdata \

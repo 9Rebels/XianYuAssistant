@@ -1,6 +1,7 @@
 package com.feijimiao.xianyuassistant.service;
 
 import com.feijimiao.xianyuassistant.service.bo.*;
+import java.util.List;
 
 /**
  * 认证服务接口
@@ -30,6 +31,11 @@ public interface AuthService {
     boolean isTokenValid(String token);
 
     /**
+     * 刷新Token最后活跃时间
+     */
+    void touchToken(String token);
+
+    /**
      * 检查IP登录错误次数限制
      * @return true=允许登录 false=超过限制
      */
@@ -54,6 +60,16 @@ public interface AuthService {
      * 修改密码
      */
     void changePassword(ChangePasswordReqBO reqBO);
+
+    /**
+     * 查询登录设备
+     */
+    List<LoginDeviceBO> listLoginDevices(Long userId, String currentToken);
+
+    /**
+     * 踢出指定登录设备
+     */
+    void kickLoginDevice(Long userId, Long tokenId, String currentToken);
 
     /**
      * 退出登录

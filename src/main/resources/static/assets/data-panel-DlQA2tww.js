@@ -1,0 +1,1 @@
+import{h as a}from"./index-CLAAcJJE.js";function n(t){return a({url:"/data-panel/stats",method:"POST",data:{date:t||void 0}})}function r(){return a({url:"/data-panel/trend",method:"POST",data:{}})}export{r as a,n as g};

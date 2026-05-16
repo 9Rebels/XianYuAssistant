@@ -96,7 +96,7 @@ public interface AccountService {
     boolean deleteAccountAndRelatedData(Long accountId);
     
     /**
-     * 更新Cookie状态
+     * 更新Cookie状态。实现内部会转成 CookieStatus 并委托 CookieStateService。
      *
      * @param accountId 账号ID
      * @param cookieStatus Cookie状态 1:有效 2:过期 3:失效
@@ -105,7 +105,7 @@ public interface AccountService {
     boolean updateCookieStatus(Long accountId, Integer cookieStatus);
     
     /**
-     * 更新Cookie状态（支持控制是否发送邮件通知）
+     * 更新Cookie状态（支持控制是否发送邮件通知）。实现内部会转成 CookieStatus 并委托 CookieStateService。
      *
      * @param accountId 账号ID
      * @param cookieStatus Cookie状态 1:有效 2:过期 3:失效

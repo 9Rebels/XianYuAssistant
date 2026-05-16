@@ -28,6 +28,14 @@ export function updateAccount(data: Partial<Account>) {
   })
 }
 
+export function getLoginCredential(accountId: number) {
+  return request<Pick<Account, 'id' | 'loginUsername' | 'loginPassword'>>({
+    url: '/account/loginCredential',
+    method: 'POST',
+    data: { accountId }
+  })
+}
+
 // 手动刷新账号资料
 export function refreshAccountProfile(accountId: number) {
   return request<{ account: Account; message: string }>({

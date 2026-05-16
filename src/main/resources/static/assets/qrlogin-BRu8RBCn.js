@@ -1,1 +1,0 @@
-import{h as t}from"./index-CclsisZh.js";function r(){return t({url:"/qrlogin/generate",method:"POST"})}function n(e){return t({url:`/qrlogin/status/${e}`,method:"POST"})}function u(e){return t({url:`/qrlogin/cookies/${e}`,method:"POST"})}export{n as a,u as b,r as g};

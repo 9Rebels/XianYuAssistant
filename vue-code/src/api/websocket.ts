@@ -96,6 +96,33 @@ export function passwordLogin(accountId: number) {
   });
 }
 
+// 确认人工验证已完成，并读取浏览器 Cookie 写回账号
+export function confirmManualVerification(accountId: number) {
+  return request<string>({
+    url: '/websocket/confirmManualVerification',
+    method: 'POST',
+    data: { xianyuAccountId: accountId },
+    timeout: 300000
+  });
+}
+
+export interface ManualVerificationPendingState {
+  accountId: number;
+  verificationType: string;
+  message: string;
+  detail: string;
+  screenshotUrl: string;
+  expiresAt: number;
+  timeoutSeconds: number;
+}
+
+export function getPendingManualVerification() {
+  return request<ManualVerificationPendingState[]>({
+    url: '/websocket/pendingManualVerification',
+    method: 'GET'
+  });
+}
+
 // 刷新Token响应
 export interface RefreshTokenResponse {
   mh5tkRefreshed: boolean;    // _m_h5_tk是否刷新成功

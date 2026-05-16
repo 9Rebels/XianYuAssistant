@@ -21,6 +21,9 @@ import java.util.Map;
 public class ConversationReadStateServiceImpl implements ConversationReadStateService {
 
     private static final int MAX_RECEIPT_LENGTH = 2000;
+    private static final long MIN_EPOCH_MILLIS = 100_000_000_000L;
+    private static final long MAX_EPOCH_MILLIS = 10_000_000_000_000L;
+    private static final long TIME_UNIT_FACTOR = 1000L;
 
     private final XianyuConversationStateMapper stateMapper;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -56,7 +59,7 @@ public class ConversationReadStateServiceImpl implements ConversationReadStateSe
         if (accountId == null || sId == null || sId.isBlank()) {
             return;
         }
-        Long timestamp = messageTime != null ? messageTime : System.currentTimeMillis();
+        Long timestamp = normalizeEpochMillis(messageTime != null ? messageTime : System.currentTimeMillis());
         try {
             stateMapper.markOutgoingUnread(accountId, sId, timestamp);
         } catch (Exception e) {
@@ -95,9 +98,23 @@ public class ConversationReadStateServiceImpl implements ConversationReadStateSe
     private Long pickTimestamp(JsonNode root) {
         JsonNode timestamp = root.path("1").path("5");
         if (!timestamp.isMissingNode() && timestamp.canConvertToLong()) {
-            return timestamp.asLong();
+            return normalizeEpochMillis(timestamp.asLong());
         }
         return System.currentTimeMillis();
+    }
+
+    static Long normalizeEpochMillis(Long timestamp) {
+        if (timestamp == null || timestamp <= 0) {
+            return timestamp;
+        }
+        long normalized = timestamp;
+        while (normalized > MAX_EPOCH_MILLIS) {
+            normalized /= TIME_UNIT_FACTOR;
+        }
+        while (normalized > 0 && normalized < MIN_EPOCH_MILLIS) {
+            normalized *= TIME_UNIT_FACTOR;
+        }
+        return normalized;
     }
 
     private String firstText(JsonNode... nodes) {

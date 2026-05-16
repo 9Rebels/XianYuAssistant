@@ -1,5 +1,6 @@
 package com.feijimiao.xianyuassistant.websocket;
 
+import com.feijimiao.xianyuassistant.enums.CookieStatus;
 import com.feijimiao.xianyuassistant.service.WebSocketService;
 import com.feijimiao.xianyuassistant.websocket.handler.*;
 import com.feijimiao.xianyuassistant.service.AccountService;
@@ -182,10 +183,10 @@ public class WebSocketMessageRouter {
                 log.debug("【账号{}】收到成功响应(200)", accountId);
             } else if (codeValue == 401) {
                 log.error("【账号{}】Token失效(401)，需要重新获取Token", accountId);
-                updateCookieStatusIfPresent(accountId, 2);
+                updateCookieStatusIfPresent(accountId, CookieStatus.EXPIRED);
             } else if (codeValue == 500) {
                 log.error("【账号{}】服务器错误(500)", accountId);
-                updateCookieStatusIfPresent(accountId, 2);
+                updateCookieStatusIfPresent(accountId, CookieStatus.EXPIRED);
             } else {
                 log.warn("【账号{}】未知响应码: {}", accountId, code);
             }
@@ -211,10 +212,10 @@ public class WebSocketMessageRouter {
         }
     }
 
-    private void updateCookieStatusIfPresent(String accountId, int status) {
+    private void updateCookieStatusIfPresent(String accountId, CookieStatus status) {
         try {
             Long id = Long.parseLong(accountId);
-            accountService.updateCookieStatus(id, status);
+            accountService.updateCookieStatus(id, status.getCode());
         } catch (NumberFormatException e) {
             log.warn("无法解析accountId: {}", accountId);
         }

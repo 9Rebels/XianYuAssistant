@@ -3,13 +3,17 @@ package com.feijimiao.xianyuassistant.controller;
 import com.feijimiao.xianyuassistant.common.ResultObject;
 import com.feijimiao.xianyuassistant.controller.dto.ChangePasswordReqDTO;
 import com.feijimiao.xianyuassistant.controller.dto.CurrentUserRespDTO;
+import com.feijimiao.xianyuassistant.controller.dto.KickLoginDeviceReqDTO;
+import com.feijimiao.xianyuassistant.controller.dto.LoginDeviceDTO;
 import com.feijimiao.xianyuassistant.entity.SysUser;
 import com.feijimiao.xianyuassistant.service.AuthService;
 import com.feijimiao.xianyuassistant.service.bo.ChangePasswordReqBO;
+import com.feijimiao.xianyuassistant.service.bo.LoginDeviceBO;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
+import java.util.List;
 
 /**
  * 系统设置控制器
@@ -84,5 +88,64 @@ public class SystemController {
             log.error("修改密码失败", e);
             return ResultObject.failed(e.getMessage());
         }
+    }
+
+    /**
+     * 查询登录设备。
+     */
+    @PostMapping("/loginDevices")
+    public ResultObject<List<LoginDeviceDTO>> loginDevices(HttpServletRequest request) {
+        try {
+            Long userId = (Long) request.getAttribute("currentUserId");
+            String currentToken = (String) request.getAttribute("currentToken");
+            if (userId == null) {
+                return ResultObject.unauthorized(null);
+            }
+            List<LoginDeviceDTO> devices = authService.listLoginDevices(userId, currentToken)
+                    .stream()
+                    .map(this::toLoginDeviceDTO)
+                    .toList();
+            return ResultObject.success(devices);
+        } catch (Exception e) {
+            log.error("获取登录设备失败", e);
+            return ResultObject.failed("获取登录设备失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 踢出登录设备。
+     */
+    @PostMapping("/kickLoginDevice")
+    public ResultObject<?> kickLoginDevice(@RequestBody KickLoginDeviceReqDTO reqDTO, HttpServletRequest request) {
+        try {
+            Long userId = (Long) request.getAttribute("currentUserId");
+            String currentToken = (String) request.getAttribute("currentToken");
+            if (userId == null) {
+                return ResultObject.unauthorized(null);
+            }
+            if (reqDTO.getTokenId() == null) {
+                return ResultObject.validateFailed("登录设备ID不能为空");
+            }
+            authService.kickLoginDevice(userId, reqDTO.getTokenId(), currentToken);
+            return ResultObject.success(null);
+        } catch (Exception e) {
+            log.error("踢出登录设备失败", e);
+            return ResultObject.failed(e.getMessage());
+        }
+    }
+
+    private LoginDeviceDTO toLoginDeviceDTO(LoginDeviceBO bo) {
+        LoginDeviceDTO dto = new LoginDeviceDTO();
+        dto.setId(bo.getId());
+        dto.setDeviceName(bo.getDeviceName());
+        dto.setBrowserName(bo.getBrowserName());
+        dto.setOsName(bo.getOsName());
+        dto.setLoginIp(bo.getLoginIp());
+        dto.setLoginTime(bo.getLoginTime());
+        dto.setLastActiveTime(bo.getLastActiveTime());
+        dto.setExpireTime(bo.getExpireTime());
+        dto.setStatus(bo.getStatus());
+        dto.setCurrent(bo.getCurrent());
+        return dto;
     }
 }

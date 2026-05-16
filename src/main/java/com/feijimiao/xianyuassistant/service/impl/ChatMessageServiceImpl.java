@@ -58,6 +58,9 @@ public class ChatMessageServiceImpl implements ChatMessageService {
             "快给ta一个评价吧～",
             "记得及时发货"
     );
+    private static final long MIN_EPOCH_MILLIS = 100_000_000_000L;
+    private static final long MAX_EPOCH_MILLIS = 10_000_000_000_000L;
+    private static final long TIME_UNIT_FACTOR = 1000L;
     
     @Autowired
     private XianyuChatMessageMapper chatMessageMapper;
@@ -213,6 +216,7 @@ public class ChatMessageServiceImpl implements ChatMessageService {
         List<XianyuChatMessage> messages = chatMessageMapper.findRecentForConversations(accountId, scanLimit);
         Map<String, OnlineConversationDTO> conversations = new LinkedHashMap<>();
         Map<String, XianyuChatMessage> latestMessageBySid = new HashMap<>();
+        Map<String, Long> latestOutgoingTimeBySid = new HashMap<>();
 
         for (XianyuChatMessage message : messages) {
             if (!isMessageForAccount(message, accountId, currentAccountUnb)) {
@@ -225,6 +229,9 @@ public class ChatMessageServiceImpl implements ChatMessageService {
             String sid = message.getSId();
             if (sid == null || sid.isBlank()) {
                 continue;
+            }
+            if (isOutgoingForAccount(message, currentAccountUnb)) {
+                latestOutgoingTimeBySid.putIfAbsent(sid, normalizeEpochMillis(message.getMessageTime()));
             }
 
             OnlineConversationDTO conversation = conversations.computeIfAbsent(sid, key -> {
@@ -258,7 +265,7 @@ public class ChatMessageServiceImpl implements ChatMessageService {
 
         List<OnlineConversationDTO> result = new ArrayList<>(conversations.values());
         result.forEach(conversation -> finalizeConversation(conversation, cache));
-        enrichReadStates(accountId, result);
+        enrichReadStates(accountId, result, latestOutgoingTimeBySid);
         return ResultObject.success(result);
     }
 
@@ -296,7 +303,8 @@ public class ChatMessageServiceImpl implements ChatMessageService {
         return conversation;
     }
 
-    private void enrichReadStates(Long accountId, List<OnlineConversationDTO> conversations) {
+    private void enrichReadStates(Long accountId, List<OnlineConversationDTO> conversations,
+                                  Map<String, Long> latestOutgoingTimeBySid) {
         List<String> sIds = conversations.stream()
                 .map(OnlineConversationDTO::getSid)
                 .filter(this::hasText)
@@ -308,10 +316,24 @@ public class ChatMessageServiceImpl implements ChatMessageService {
             if (state == null || state.getReadStatus() == null) {
                 return;
             }
-            conversation.setReadStatus(state.getReadStatus());
-            conversation.setReadTimestamp(state.getReadTimestamp());
-            conversation.setReadStatusText(state.getReadStatus() == 1 ? "已读" : "未读");
+            Integer readStatus = resolveReadStatus(state, latestOutgoingTimeBySid.get(conversation.getSid()));
+            conversation.setReadStatus(readStatus);
+            conversation.setReadTimestamp(normalizeEpochMillis(state.getReadTimestamp()));
+            conversation.setReadStatusText(readStatus == 1 ? "已读" : "未读");
         });
+    }
+
+    private Integer resolveReadStatus(XianyuConversationState state, Long latestOutgoingTime) {
+        if (state.getReadStatus() == null) {
+            return null;
+        }
+        Long readTimestamp = normalizeEpochMillis(state.getReadTimestamp());
+        if (state.getReadStatus() == 1
+                && latestOutgoingTime != null
+                && (readTimestamp == null || readTimestamp < latestOutgoingTime)) {
+            return 0;
+        }
+        return state.getReadStatus();
     }
 
     private boolean needsGoodsEnrich(OnlineConversationDTO conversation, XianyuChatMessage message) {
@@ -767,6 +789,27 @@ public class ChatMessageServiceImpl implements ChatMessageService {
         }
 
         return true;
+    }
+
+    private boolean isOutgoingForAccount(XianyuChatMessage message, String currentAccountUnb) {
+        if (message == null || !hasText(currentAccountUnb)) {
+            return false;
+        }
+        return normalizeUserId(currentAccountUnb).equals(normalizeUserId(message.getSenderUserId()));
+    }
+
+    private Long normalizeEpochMillis(Long timestamp) {
+        if (timestamp == null || timestamp <= 0) {
+            return timestamp;
+        }
+        long normalized = timestamp;
+        while (normalized > MAX_EPOCH_MILLIS) {
+            normalized /= TIME_UNIT_FACTOR;
+        }
+        while (normalized > 0 && normalized < MIN_EPOCH_MILLIS) {
+            normalized *= TIME_UNIT_FACTOR;
+        }
+        return normalized;
     }
 
     private Boolean isGoodsOwnedByAccount(Long accountId, String xyGoodsId) {

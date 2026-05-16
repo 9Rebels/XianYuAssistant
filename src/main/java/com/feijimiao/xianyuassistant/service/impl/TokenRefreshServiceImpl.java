@@ -3,9 +3,11 @@ package com.feijimiao.xianyuassistant.service.impl;
 import com.feijimiao.xianyuassistant.config.WebSocketConfig;
 import com.feijimiao.xianyuassistant.entity.XianyuAccount;
 import com.feijimiao.xianyuassistant.entity.XianyuCookie;
+import com.feijimiao.xianyuassistant.enums.AccountStatus;
 import com.feijimiao.xianyuassistant.mapper.XianyuAccountMapper;
 import com.feijimiao.xianyuassistant.mapper.XianyuCookieMapper;
 import com.feijimiao.xianyuassistant.service.AccountIdentityGuard;
+import com.feijimiao.xianyuassistant.service.CookieStateService;
 import com.feijimiao.xianyuassistant.service.CookieRefreshService;
 import com.feijimiao.xianyuassistant.service.NotificationService;
 import com.feijimiao.xianyuassistant.service.OperationLogService;
@@ -82,6 +84,9 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
 
     @Autowired
     private AccountIdentityGuard accountIdentityGuard;
+
+    @Autowired
+    private CookieStateService cookieStateService;
 
     private volatile long nextCookieKeepAliveTime = 0;
 
@@ -239,12 +244,7 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
         if (hasLoginAttempted) {
             log.error("【账号{}】已尝试过hasLogin刷新但仍失败，Cookie可能已彻底过期", accountId);
             
-            // 更新Cookie状态为过期
-            cookieMapper.update(null,
-                    new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<XianyuCookie>()
-                            .eq(XianyuCookie::getXianyuAccountId, accountId)
-                            .set(XianyuCookie::getCookieStatus, 2)
-            );
+            cookieStateService.markExpired(accountId, false);
             
             // 记录操作日志
             operationLogService.log(accountId,
@@ -276,12 +276,7 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
         if (hasLoginRetryCount >= 2) {
             log.error("【账号{}】hasLogin刷新重试次数已达上限，Cookie已彻底过期", accountId);
             
-            // 更新Cookie状态为过期
-            cookieMapper.update(null,
-                    new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<XianyuCookie>()
-                            .eq(XianyuCookie::getXianyuAccountId, accountId)
-                            .set(XianyuCookie::getCookieStatus, 2)
-            );
+            cookieStateService.markExpired(accountId, false);
             
             // 记录操作日志
             operationLogService.log(accountId,
@@ -431,7 +426,7 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
             int failCount = 0;
 
             for (XianyuAccount account : accounts) {
-                if (account.getStatus() == 1) {
+                if (AccountStatus.isNormal(account.getStatus())) {
                     try {
                         // 第1步：通过hasLogin保持Cookie活跃
                         boolean loginOk = cookieRefreshService.checkLoginStatus(account.getId());
@@ -511,7 +506,7 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
             List<XianyuAccount> accounts = accountMapper.selectList(null);
 
             for (XianyuAccount account : accounts) {
-                if (account.getStatus() == 1) { // 只刷新正常状态的账号
+                if (AccountStatus.isNormal(account.getStatus())) {
                     // 检查是否需要刷新（提前1小时刷新，与Python一致）
                     if (needsRefresh(account.getId())) {
                         log.info("🔄 账号{}的WebSocket token即将过期，开始刷新...", account.getId());
@@ -550,7 +545,7 @@ public class TokenRefreshServiceImpl implements TokenRefreshService {
             int failCount = 0;
 
             for (XianyuAccount account : accounts) {
-                if (account.getStatus() == 1) { // 只刷新正常状态的账号
+                if (AccountStatus.isNormal(account.getStatus())) {
                     boolean success = refreshMh5tkToken(account.getId());
                     if (success) {
                         successCount++;

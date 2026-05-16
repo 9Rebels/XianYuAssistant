@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { getCurrentUser, changePassword } from '@/api/system'
+import { getCurrentUser, changePassword, kickLoginDevice, listLoginDevices } from '@/api/system'
+import type { LoginDevice } from '@/api/system'
 import { logout } from '@/api/auth'
 import { getSetting, saveSetting } from '@/api/setting'
 import { getAIStatus } from '@/api/ai'
@@ -36,6 +37,9 @@ const showConfirmPassword = ref(false)
 
 // 退出登录
 const loggingOut = ref(false)
+const loginDevices = ref<LoginDevice[]>([])
+const loginDevicesLoading = ref(false)
+const kickingDeviceId = ref<number | null>(null)
 
 // 系统提示词
 const SYS_PROMPT_KEY = 'sys_prompt'
@@ -168,6 +172,7 @@ onMounted(async () => {
   await loadMessageConfig()
   // 加载商品操作配置
   await loadGoodsOperationConfig()
+  await loadLoginDevices()
 })
 
 function settingEnabled(value: string | null | undefined, defaultValue: boolean) {
@@ -430,6 +435,64 @@ async function handleLogout() {
     }
   } catch {
     // 用户取消
+  }
+}
+
+async function loadLoginDevices() {
+  loginDevicesLoading.value = true
+  try {
+    const res = await listLoginDevices()
+    if (res.code === 200) {
+      loginDevices.value = res.data || []
+    }
+  } catch (e) {
+    console.error('获取登录设备失败:', e)
+  } finally {
+    loginDevicesLoading.value = false
+  }
+}
+
+function getLoginDeviceStatusText(status: number) {
+  if (status === 1) return '在线'
+  if (status === 0) return '已退出'
+  if (status === -1) return '已踢出'
+  return '未知'
+}
+
+function getLoginDeviceStatusClass(device: LoginDevice) {
+  if (device.current) return 'settings__status-badge--success'
+  if (device.status === 1) return 'settings__status-badge--success'
+  if (device.status === -1) return 'settings__status-badge--danger'
+  return ''
+}
+
+async function handleKickLoginDevice(device: LoginDevice) {
+  if (device.current) {
+    ElMessage.warning('不能踢出当前设备，请使用退出登录')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定踢出 ${device.deviceName || '该设备'} 吗？`,
+      '踢出设备',
+      {
+        confirmButtonText: '踢出',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    kickingDeviceId.value = device.id
+    const res = await kickLoginDevice(device.id)
+    if (res.code === 200) {
+      ElMessage.success('已踢出该设备')
+      await loadLoginDevices()
+    }
+  } catch (e: any) {
+    if (e !== 'cancel' && e !== 'close') {
+      ElMessage.error(e.message || '踢出设备失败')
+    }
+  } finally {
+    kickingDeviceId.value = null
   }
 }
 
@@ -763,6 +826,64 @@ function handleResetEmbeddingConfig() {
               </button>
               <button class="settings__btn settings__btn--primary" :disabled="changingPassword" @click="handleChangePassword">
                 {{ changingPassword ? '请稍候...' : '确认修改' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 登录设备 -->
+        <div class="settings__section">
+          <div class="settings__section-header">
+            <div class="settings__section-title">登录设备</div>
+            <button
+              class="settings__toggle-btn"
+              :disabled="loginDevicesLoading"
+              @click="loadLoginDevices"
+            >
+              {{ loginDevicesLoading ? '刷新中...' : '刷新' }}
+            </button>
+          </div>
+          <p class="settings__desc">支持多端同时在线，可手动踢出指定设备。</p>
+          <div v-if="loginDevicesLoading" class="settings__loading">
+            <div class="settings__spinner"></div>
+            <span>加载登录设备...</span>
+          </div>
+          <div v-else-if="loginDevices.length === 0" class="settings__empty">
+            暂无登录设备
+          </div>
+          <div v-else class="settings__device-list">
+            <div
+              v-for="device in loginDevices"
+              :key="device.id"
+              class="settings__device-card"
+              :class="{ 'settings__device-card--current': device.current }"
+            >
+              <div class="settings__device-main">
+                <div class="settings__device-title-row">
+                  <span class="settings__device-title">{{ device.deviceName || '未知设备' }}</span>
+                  <span
+                    class="settings__status-badge"
+                    :class="getLoginDeviceStatusClass(device)"
+                  >
+                    {{ device.current ? '当前设备' : getLoginDeviceStatusText(device.status) }}
+                  </span>
+                </div>
+                <div class="settings__device-meta">
+                  <span>{{ device.loginIp || '-' }}</span>
+                  <span>{{ device.browserName || '-' }}</span>
+                  <span>{{ device.osName || '-' }}</span>
+                </div>
+                <div class="settings__device-time">
+                  <span>登录：{{ device.loginTime || '-' }}</span>
+                  <span>活跃：{{ device.lastActiveTime || '-' }}</span>
+                </div>
+              </div>
+              <button
+                class="settings__btn settings__btn--danger settings__btn--small"
+                :disabled="device.current || device.status !== 1 || kickingDeviceId === device.id"
+                @click="handleKickLoginDevice(device)"
+              >
+                {{ kickingDeviceId === device.id ? '踢出中...' : '踢出' }}
               </button>
             </div>
           </div>
@@ -1951,6 +2072,12 @@ function handleResetEmbeddingConfig() {
   transform: scale(0.97);
 }
 
+.settings__btn--small {
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
 /* AI Status */
 .settings__ai-status {
   display: flex;
@@ -2002,6 +2129,64 @@ function handleResetEmbeddingConfig() {
   font-size: 14px;
   color: var(--s-text-2);
   margin: 0 0 12px 0;
+}
+
+.settings__device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.settings__device-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--s-border);
+  border-radius: 10px;
+  background: var(--s-card-bg);
+}
+
+.settings__device-card--current {
+  border-color: color-mix(in srgb, var(--s-success) 38%, transparent);
+  background: var(--s-success-soft);
+}
+
+.settings__device-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings__device-title-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings__device-title {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--s-text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings__device-meta,
+.settings__device-time {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  font-size: 12px;
+  color: var(--s-text-2);
 }
 
 /* QR Code */
@@ -2100,6 +2285,11 @@ function handleResetEmbeddingConfig() {
 
   .settings__model-row {
     grid-template-columns: 1fr;
+  }
+
+  .settings__device-card {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .settings__qrcode {
@@ -2295,6 +2485,11 @@ function handleResetEmbeddingConfig() {
 .settings__status-badge--success {
   background: var(--s-success-soft);
   color: var(--s-success);
+}
+
+.settings__status-badge--danger {
+  background: var(--s-danger-soft);
+  color: var(--s-danger);
 }
 
 .settings__switch {

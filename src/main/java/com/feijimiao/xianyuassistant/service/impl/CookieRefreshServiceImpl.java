@@ -13,10 +13,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.feijimiao.xianyuassistant.constants.OperationConstants;
 import com.feijimiao.xianyuassistant.entity.XianyuAccount;
 import com.feijimiao.xianyuassistant.entity.XianyuCookie;
+import com.feijimiao.xianyuassistant.enums.AccountStatus;
+import com.feijimiao.xianyuassistant.enums.CookieStatus;
 import com.feijimiao.xianyuassistant.mapper.XianyuAccountMapper;
 import com.feijimiao.xianyuassistant.mapper.XianyuCookieMapper;
 import com.feijimiao.xianyuassistant.service.AccountIdentityGuard;
+import com.feijimiao.xianyuassistant.service.AccountStateService;
 import com.feijimiao.xianyuassistant.service.CookieRefreshService;
+import com.feijimiao.xianyuassistant.service.CookieStateService;
 import com.feijimiao.xianyuassistant.service.NotificationService;
 import com.feijimiao.xianyuassistant.service.OperationLogService;
 import com.feijimiao.xianyuassistant.utils.DateTimeUtils;
@@ -73,6 +77,15 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
 
     @Autowired
     private AccountIdentityGuard accountIdentityGuard;
+
+    @Autowired
+    private CookieStateService cookieStateService;
+
+    @Autowired
+    private AccountStateService accountStateService;
+
+    @Autowired
+    private com.feijimiao.xianyuassistant.service.SliderBrowserFingerprintService sliderBrowserFingerprintService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -214,12 +227,7 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
                     log.error("【账号{}】❌ hasLogin触发风控: {}", accountId, responseBody);
                     log.error("【账号{}】系统目前无法自动解决，请进入闲鱼网页版-点击消息-过滑块-复制最新的Cookie", accountId);
                     
-                    // 标记为失效（风控）
-                    cookieMapper.update(null,
-                            new LambdaUpdateWrapper<XianyuCookie>()
-                                    .eq(XianyuCookie::getXianyuAccountId, accountId)
-                                    .set(XianyuCookie::getCookieStatus, 3) // 3表示失效（风控）
-                    );
+                    cookieStateService.markInvalid(accountId, "hasLogin触发风控");
 
                     // 记录操作日志
                     operationLogService.log(accountId,
@@ -284,10 +292,10 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
                                 new LambdaUpdateWrapper<XianyuCookie>()
                                         .eq(XianyuCookie::getXianyuAccountId, accountId)
                                         .set(XianyuCookie::getCookieText, newCookieStr)
-                                        .set(XianyuCookie::getCookieStatus, 1)
                                         .set(XianyuCookie::getUpdatedTime, updatedTime)
                                         .set(mh5tkUpdated && newMh5tk != null, XianyuCookie::getMH5Tk, newMh5tk)
                         );
+                        cookieStateService.markValid(accountId);
 
                         if (mh5tkUpdated) {
                             log.info("【账号{}】✅ _m_h5_tk已从hasLogin响应中更新: {} -> {}",
@@ -297,14 +305,8 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
                         }
                         log.info("【账号{}】✅ Cookie已通过SessionCookieJar自动更新到数据库", accountId);
                     } else {
-                        if (cookie.getCookieStatus() == null || cookie.getCookieStatus() != 1) {
-                            String updatedTime = DateTimeUtils.currentShanghaiTimeWithMillis();
-                            cookieMapper.update(null,
-                                    new LambdaUpdateWrapper<XianyuCookie>()
-                                            .eq(XianyuCookie::getXianyuAccountId, accountId)
-                                            .set(XianyuCookie::getCookieStatus, 1)
-                                            .set(XianyuCookie::getUpdatedTime, updatedTime)
-                            );
+                        if (!CookieStatus.isValid(cookie.getCookieStatus())) {
+                            cookieStateService.markValid(accountId);
                             log.info("【账号{}】✅ Cookie状态已更新为有效", accountId);
                         }
                         log.info("【账号{}】Cookie无变化，登录态仍然有效", accountId);
@@ -488,17 +490,40 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
                 null, null, null, null);
 
         try (Playwright playwright = Playwright.create()) {
-            BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions().setHeadless(true);
+            com.feijimiao.xianyuassistant.service.SliderBrowserFingerprintService.BrowserProfile profile =
+                    sliderBrowserFingerprintService.profile(accountId);
+            List<String> launchArgs = sliderBrowserFingerprintService.buildLaunchArgs(profile);
+            launchArgs.add("--disable-gpu");
+            launchArgs.add("--remote-allow-origins=*");
+
+            BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions()
+                    .setHeadless(true)
+                    .setIgnoreDefaultArgs(List.of("--enable-automation"))
+                    .setArgs(launchArgs);
             PlaywrightBrowserUtils.resolveChromiumPath().ifPresent(launchOptions::setExecutablePath);
             try (Browser browser = playwright.chromium().launch(launchOptions)) {
                 Browser.NewContextOptions contextOptions = new Browser.NewContextOptions()
-                        .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+                        .setViewportSize(profile.getViewportWidth(), profile.getViewportHeight())
+                        .setScreenSize(profile.getViewportWidth(), profile.getViewportHeight())
+                        .setDeviceScaleFactor(profile.getDeviceScaleFactor())
+                        .setIsMobile(false)
+                        .setHasTouch(false)
+                        .setUserAgent(profile.getUserAgent())
+                        .setLocale(profile.getLocale())
+                        .setTimezoneId(profile.getTimezoneId())
+                        .setExtraHTTPHeaders(sliderBrowserFingerprintService.extraHeaders(profile));
                 try (BrowserContext context = browser.newContext(contextOptions)) {
+                    String stealthScript = sliderBrowserFingerprintService.stealthScript(profile);
+                    if (stealthScript != null && !stealthScript.isBlank()) {
+                        context.addInitScript(stealthScript);
+                    }
                     List<Cookie> browserCookies = buildBrowserCookies(existingCookies);
                     context.addCookies(browserCookies);
 
                     Page page = context.newPage();
-                    log.info("【账号{}】浏览器兜底刷新Cookie，开始访问 {}", accountId, GOOFISH_IM_URL);
+                    sliderBrowserFingerprintService.applyNetworkFingerprint(context, page, profile);
+                    log.info("【账号{}】浏览器兜底刷新Cookie，开始访问 {} (profile={}, ua={})",
+                            accountId, GOOFISH_IM_URL, profile.getProfileId(), profile.getUserAgent());
                     page.navigate(GOOFISH_IM_URL,
                             new Page.NavigateOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
                     page.reload(new Page.ReloadOptions().setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
@@ -536,9 +561,9 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
                             new LambdaUpdateWrapper<XianyuCookie>()
                                     .eq(XianyuCookie::getXianyuAccountId, accountId)
                                     .set(XianyuCookie::getCookieText, refreshedCookieText)
-                                    .set(XianyuCookie::getCookieStatus, 1)
                                     .set(newMh5Tk != null && !newMh5Tk.isBlank(), XianyuCookie::getMH5Tk, newMh5Tk)
                     );
+                    cookieStateService.markValid(accountId);
 
                     log.info("【账号{}】浏览器兜底刷新Cookie成功，Cookie长度: {}", accountId, refreshedCookieText.length());
                     operationLogService.log(accountId,
@@ -581,7 +606,7 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
                         null, null, "账号不存在，原因: " + reason, null);
                 return;
             }
-            if (Objects.equals(account.getStatus(), -2)) {
+            if (AccountStatus.isCaptchaRequired(account.getStatus())) {
                 operationLogService.log(accountId,
                         OperationConstants.Type.UPDATE,
                         OperationConstants.Module.ACCOUNT,
@@ -593,8 +618,7 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
                 return;
             }
 
-            account.setStatus(-2);
-            accountMapper.updateById(account);
+            accountStateService.markCaptchaRequired(accountId, reason);
             log.warn("【账号{}】浏览器兜底刷新失败后，账号状态已更新为-2（异常待处理）", accountId);
             operationLogService.log(accountId,
                     OperationConstants.Type.UPDATE,
@@ -620,18 +644,21 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
     private void updateAccountStatusToNormal(Long accountId, String reason) {
         try {
             XianyuAccount account = accountMapper.selectById(accountId);
-            if (account != null && Objects.equals(account.getStatus(), -2)) {
-                account.setStatus(1);
-                accountMapper.updateById(account);
-                log.info("【账号{}】Cookie刷新成功后，账号状态已恢复为1（正常）", accountId);
-                operationLogService.log(accountId,
-                        OperationConstants.Type.UPDATE,
-                        OperationConstants.Module.ACCOUNT,
-                        "Cookie刷新成功，账号状态已恢复正常",
-                        OperationConstants.Status.SUCCESS,
-                        OperationConstants.TargetType.ACCOUNT,
-                        String.valueOf(accountId),
-                        null, null, reason, null);
+            if (account != null && AccountStatus.isCaptchaRequired(account.getStatus())) {
+                boolean restored = accountStateService.restoreNormalIfCaptchaRequired(accountId, reason);
+                if (restored) {
+                    log.info("【账号{}】Cookie刷新成功后，账号状态已恢复为1（正常）", accountId);
+                    operationLogService.log(accountId,
+                            OperationConstants.Type.UPDATE,
+                            OperationConstants.Module.ACCOUNT,
+                            "Cookie刷新成功，账号状态已恢复正常",
+                            OperationConstants.Status.SUCCESS,
+                            OperationConstants.TargetType.ACCOUNT,
+                            String.valueOf(accountId),
+                            null, null, reason, null);
+                } else {
+                    log.info("【账号{}】Cookie刷新成功，账号状态无需恢复或已被其他流程更新", accountId);
+                }
             }
         } catch (Exception e) {
             log.error("【账号{}】Cookie刷新成功后恢复账号状态失败", accountId, e);

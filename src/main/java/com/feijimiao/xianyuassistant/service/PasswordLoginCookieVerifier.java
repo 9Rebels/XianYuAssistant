@@ -30,9 +30,6 @@ class PasswordLoginCookieVerifier {
     }
 
     LoginCookieCheck check(Long accountId, Page page, BrowserContext context) {
-        if (!isLoginUrlCleared(page)) {
-            return LoginCookieCheck.failed("仍在登录页");
-        }
         Map<String, String> cookieMap = collectCookieMap(context);
         if (!stateInspector.hasCompletedLoginCookies(cookieMap)) {
             log.debug("[PasswordLogin] Cookie字段未齐全: missing={}",

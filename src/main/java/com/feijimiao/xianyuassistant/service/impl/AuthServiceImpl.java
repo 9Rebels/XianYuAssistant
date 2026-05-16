@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -36,6 +37,9 @@ public class AuthServiceImpl implements AuthService {
 
     /** 缓存key前缀 */
     private static final String LOGIN_ATTEMPT_PREFIX = "login_attempt:";
+    private static final int TOKEN_STATUS_ACTIVE = 1;
+    private static final int TOKEN_STATUS_LOGGED_OUT = 0;
+    private static final int TOKEN_STATUS_KICKED = -1;
 
     @Autowired
     private SysUserMapper sysUserMapper;
@@ -90,6 +94,9 @@ public class AuthServiceImpl implements AuthService {
         LoginReqBO loginReqBO = new LoginReqBO();
         loginReqBO.setUsername(reqBO.getUsername());
         loginReqBO.setPassword(reqBO.getPassword());
+        loginReqBO.setIp(reqBO.getIp());
+        loginReqBO.setDeviceId(reqBO.getDeviceId());
+        loginReqBO.setUserAgent(reqBO.getUserAgent());
         return login(loginReqBO);
     }
 
@@ -116,24 +123,26 @@ public class AuthServiceImpl implements AuthService {
         // 生成Token
         String token = jwtUtil.generateToken(user.getId(), user.getUsername());
 
-        // 单设备登录：删除该用户之前的所有Token（挤下线旧设备）
-        LambdaQueryWrapper<SysLoginToken> tokenWrapper = new LambdaQueryWrapper<>();
-        tokenWrapper.eq(SysLoginToken::getUserId, user.getId());
-        sysLoginTokenMapper.delete(tokenWrapper);
-
         // 保存新Token到数据库
+        String now = LocalDateTime.now().format(FORMATTER);
         SysLoginToken loginToken = new SysLoginToken();
         loginToken.setUserId(user.getId());
         loginToken.setToken(token);
         loginToken.setDeviceId(reqBO.getDeviceId());
+        loginToken.setDeviceName(buildDeviceName(reqBO.getUserAgent()));
+        loginToken.setBrowserName(parseBrowserName(reqBO.getUserAgent()));
+        loginToken.setOsName(parseOsName(reqBO.getUserAgent()));
+        loginToken.setUserAgent(reqBO.getUserAgent());
         loginToken.setLoginIp(reqBO.getIp());
         loginToken.setExpireTime(LocalDateTime.now().plusDays(30).format(FORMATTER));
-        loginToken.setCreatedTime(LocalDateTime.now().format(FORMATTER));
-        loginToken.setUpdatedTime(LocalDateTime.now().format(FORMATTER));
+        loginToken.setLastActiveTime(now);
+        loginToken.setStatus(TOKEN_STATUS_ACTIVE);
+        loginToken.setCreatedTime(now);
+        loginToken.setUpdatedTime(now);
         sysLoginTokenMapper.insert(loginToken);
 
         // 更新用户最后登录信息
-        user.setLastLoginTime(LocalDateTime.now().format(FORMATTER));
+        user.setLastLoginTime(now);
         user.setLastLoginIp(reqBO.getIp());
         sysUserMapper.updateById(user);
 
@@ -164,13 +173,19 @@ public class AuthServiceImpl implements AuthService {
         if (loginToken == null) {
             return false;
         }
+        if (effectiveStatus(loginToken) != TOKEN_STATUS_ACTIVE) {
+            cacheService.remove("token:" + token);
+            return false;
+        }
 
         // 检查是否过期
         try {
             LocalDateTime expireTime = LocalDateTime.parse(loginToken.getExpireTime(), FORMATTER);
             if (expireTime.isBefore(LocalDateTime.now())) {
-                // Token已过期，删除
-                sysLoginTokenMapper.deleteById(loginToken.getId());
+                loginToken.setStatus(TOKEN_STATUS_LOGGED_OUT);
+                loginToken.setUpdatedTime(LocalDateTime.now().format(FORMATTER));
+                sysLoginTokenMapper.updateById(loginToken);
+                cacheService.remove("token:" + token);
                 return false;
             }
         } catch (Exception e) {
@@ -180,6 +195,21 @@ public class AuthServiceImpl implements AuthService {
         // 回填缓存
         cacheService.put("token:" + token, loginToken.getUserId(), 30, TimeUnit.DAYS);
         return true;
+    }
+
+    @Override
+    public void touchToken(String token) {
+        if (token == null || token.isEmpty()) {
+            return;
+        }
+        LambdaQueryWrapper<SysLoginToken> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(SysLoginToken::getToken, token);
+        SysLoginToken loginToken = sysLoginTokenMapper.selectOne(wrapper);
+        if (loginToken == null || effectiveStatus(loginToken) != TOKEN_STATUS_ACTIVE) {
+            return;
+        }
+        loginToken.setLastActiveTime(LocalDateTime.now().format(FORMATTER));
+        sysLoginTokenMapper.updateById(loginToken);
     }
 
     @Override
@@ -243,19 +273,110 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
+    public List<LoginDeviceBO> listLoginDevices(Long userId, String currentToken) {
+        LambdaQueryWrapper<SysLoginToken> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(SysLoginToken::getUserId, userId);
+        wrapper.orderByDesc(SysLoginToken::getCreatedTime);
+        List<SysLoginToken> tokens = sysLoginTokenMapper.selectList(wrapper);
+        List<LoginDeviceBO> devices = new ArrayList<>();
+        for (SysLoginToken token : tokens) {
+            devices.add(toLoginDevice(token, currentToken));
+        }
+        return devices;
+    }
+
+    @Override
+    public void kickLoginDevice(Long userId, Long tokenId, String currentToken) {
+        SysLoginToken loginToken = sysLoginTokenMapper.selectById(tokenId);
+        if (loginToken == null || !userId.equals(loginToken.getUserId())) {
+            throw new RuntimeException("登录设备不存在");
+        }
+        if (loginToken.getToken() != null && loginToken.getToken().equals(currentToken)) {
+            throw new RuntimeException("不能踢出当前设备，请使用退出登录");
+        }
+        loginToken.setStatus(TOKEN_STATUS_KICKED);
+        loginToken.setUpdatedTime(LocalDateTime.now().format(FORMATTER));
+        sysLoginTokenMapper.updateById(loginToken);
+        cacheService.remove("token:" + loginToken.getToken());
+        log.info("[Auth] 踢出登录设备: userId={}, tokenId={}", userId, tokenId);
+    }
+
+    @Override
     public void logout(String token) {
         if (token == null || token.isEmpty()) {
             return;
         }
 
-        // 删除数据库中的Token
         LambdaQueryWrapper<SysLoginToken> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(SysLoginToken::getToken, token);
-        sysLoginTokenMapper.delete(wrapper);
+        SysLoginToken loginToken = sysLoginTokenMapper.selectOne(wrapper);
+        if (loginToken != null) {
+            loginToken.setStatus(TOKEN_STATUS_LOGGED_OUT);
+            loginToken.setUpdatedTime(LocalDateTime.now().format(FORMATTER));
+            sysLoginTokenMapper.updateById(loginToken);
+        }
 
         // 删除缓存中的Token
         cacheService.remove("token:" + token);
 
         log.info("[Auth] 退出登录成功: token={}", token);
+    }
+
+    private LoginDeviceBO toLoginDevice(SysLoginToken token, String currentToken) {
+        LoginDeviceBO device = new LoginDeviceBO();
+        device.setId(token.getId());
+        device.setDeviceName(firstText(token.getDeviceName(), buildDeviceName(token.getUserAgent())));
+        device.setBrowserName(firstText(token.getBrowserName(), parseBrowserName(token.getUserAgent())));
+        device.setOsName(firstText(token.getOsName(), parseOsName(token.getUserAgent())));
+        device.setLoginIp(token.getLoginIp());
+        device.setLoginTime(token.getCreatedTime());
+        device.setLastActiveTime(token.getLastActiveTime());
+        device.setExpireTime(token.getExpireTime());
+        device.setStatus(effectiveStatus(token));
+        device.setCurrent(token.getToken() != null && token.getToken().equals(currentToken));
+        return device;
+    }
+
+    private int effectiveStatus(SysLoginToken token) {
+        return token.getStatus() == null ? TOKEN_STATUS_ACTIVE : token.getStatus();
+    }
+
+    private String firstText(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private String buildDeviceName(String userAgent) {
+        String os = parseOsName(userAgent);
+        String browser = parseBrowserName(userAgent);
+        if ("未知设备".equals(os) && "未知浏览器".equals(browser)) {
+            return "未知设备";
+        }
+        return os + " · " + browser;
+    }
+
+    private String parseOsName(String userAgent) {
+        if (userAgent == null || userAgent.isBlank()) {
+            return "未知设备";
+        }
+        String ua = userAgent.toLowerCase();
+        if (ua.contains("windows")) return "Windows";
+        if (ua.contains("android")) return "Android";
+        if (ua.contains("iphone") || ua.contains("ipad")) return "iOS";
+        if (ua.contains("mac os") || ua.contains("macintosh")) return "macOS";
+        if (ua.contains("linux")) return "Linux";
+        return "未知设备";
+    }
+
+    private String parseBrowserName(String userAgent) {
+        if (userAgent == null || userAgent.isBlank()) {
+            return "未知浏览器";
+        }
+        String ua = userAgent.toLowerCase();
+        if (ua.contains("edg/")) return "Edge";
+        if (ua.contains("opr/") || ua.contains("opera")) return "Opera";
+        if (ua.contains("firefox/")) return "Firefox";
+        if (ua.contains("chrome/") || ua.contains("crios/")) return "Chrome";
+        if (ua.contains("safari/")) return "Safari";
+        return "未知浏览器";
     }
 }

@@ -1,11 +1,14 @@
 package com.feijimiao.xianyuassistant.service.impl;
 
 import com.feijimiao.xianyuassistant.entity.XianyuCookie;
+import com.feijimiao.xianyuassistant.enums.CookieStatus;
 import com.feijimiao.xianyuassistant.exception.CookieExpiredException;
 import com.feijimiao.xianyuassistant.mapper.XianyuAccountMapper;
 import com.feijimiao.xianyuassistant.mapper.XianyuCookieMapper;
+import com.feijimiao.xianyuassistant.service.AccountStateService;
 import com.feijimiao.xianyuassistant.service.AccountService;
 import com.feijimiao.xianyuassistant.service.CaptchaService;
+import com.feijimiao.xianyuassistant.service.CookieStateService;
 import com.feijimiao.xianyuassistant.service.NotificationService;
 import com.feijimiao.xianyuassistant.service.OperationLogService;
 import org.junit.jupiter.api.Test;
@@ -19,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -73,6 +77,7 @@ class WebSocketTokenServiceImplTest {
         NotificationContentBuilder contentBuilder = mock(NotificationContentBuilder.class);
         XianyuCookieMapper cookieMapper = mock(XianyuCookieMapper.class);
         XianyuAccountMapper accountMapper = mock(XianyuAccountMapper.class);
+        StateServices stateServices = wireStateServices(service);
 
         ReflectionTestUtils.setField(service, "captchaService", captchaService);
         ReflectionTestUtils.setField(service, "accountService", accountService);
@@ -98,6 +103,8 @@ class WebSocketTokenServiceImplTest {
 
         assertTrue(autoSolved);
         verify(accountService).updateAccountCookie(11L, "abc", "unb=abc; new-cookie=value");
+        verify(stateServices.accountStateService()).restoreNormalIfCaptchaRequired(
+                eq(11L), anyString());
         verify(notificationService, never()).notifyEvent(
                 eq(NotificationService.EVENT_CAPTCHA_SUCCESS),
                 eq("【闲鱼助手】人机验证恢复成功"),
@@ -160,6 +167,7 @@ class WebSocketTokenServiceImplTest {
         CaptchaService captchaService = mock(CaptchaService.class);
         XianyuCookieMapper cookieMapper = mock(XianyuCookieMapper.class);
         XianyuAccountMapper accountMapper = mock(XianyuAccountMapper.class);
+        StateServices stateServices = wireStateServices(service);
 
         ReflectionTestUtils.setField(service, "captchaService", captchaService);
         ReflectionTestUtils.setField(service, "xianyuCookieMapper", cookieMapper);
@@ -184,6 +192,7 @@ class WebSocketTokenServiceImplTest {
         CaptchaService captchaService = mock(CaptchaService.class);
         XianyuCookieMapper cookieMapper = mock(XianyuCookieMapper.class);
         XianyuAccountMapper accountMapper = mock(XianyuAccountMapper.class);
+        StateServices stateServices = wireStateServices(service);
 
         ReflectionTestUtils.setField(service, "captchaService", captchaService);
         ReflectionTestUtils.setField(service, "xianyuCookieMapper", cookieMapper);
@@ -202,6 +211,7 @@ class WebSocketTokenServiceImplTest {
 
         assertFalse(result);
         assertTrue(service.isCaptchaWaiting(22L));
+        verify(stateServices.accountStateService()).markCaptchaRequired(eq(22L), anyString());
     }
 
     @Test
@@ -213,6 +223,7 @@ class WebSocketTokenServiceImplTest {
         NotificationContentBuilder contentBuilder = mock(NotificationContentBuilder.class);
         XianyuCookieMapper cookieMapper = mock(XianyuCookieMapper.class);
         XianyuAccountMapper accountMapper = mock(XianyuAccountMapper.class);
+        StateServices stateServices = wireStateServices(service);
 
         ReflectionTestUtils.setField(service, "captchaService", captchaService);
         ReflectionTestUtils.setField(service, "accountService", accountService);
@@ -238,6 +249,8 @@ class WebSocketTokenServiceImplTest {
         assertTrue(result);
         assertFalse(service.isCaptchaWaiting(33L));
         verify(accountService).updateAccountCookie(33L, "abc", "unb=abc; new-cookie=value");
+        verify(stateServices.accountStateService()).restoreNormalIfCaptchaRequired(
+                eq(33L), anyString());
     }
 
     @Test
@@ -272,6 +285,7 @@ class WebSocketTokenServiceImplTest {
         XianyuCookieMapper cookieMapper = mock(XianyuCookieMapper.class);
         XianyuAccountMapper accountMapper = mock(XianyuAccountMapper.class);
         OperationLogService operationLogService = mock(OperationLogService.class);
+        StateServices stateServices = wireStateServices(service);
 
         ReflectionTestUtils.setField(service, "xianyuCookieMapper", cookieMapper);
         ReflectionTestUtils.setField(service, "xianyuAccountMapper", accountMapper);
@@ -296,6 +310,8 @@ class WebSocketTokenServiceImplTest {
                 0,
                 true
         ));
+        verify(stateServices.cookieStateService()).updateStatus(
+                eq(77L), eq(CookieStatus.EXPIRED), eq(true));
     }
 
     @Test
@@ -305,6 +321,7 @@ class WebSocketTokenServiceImplTest {
         XianyuAccountMapper accountMapper = mock(XianyuAccountMapper.class);
         OperationLogService operationLogService = mock(OperationLogService.class);
         CaptchaService captchaService = mock(CaptchaService.class);
+        StateServices stateServices = wireStateServices(service);
 
         ReflectionTestUtils.setField(service, "xianyuCookieMapper", cookieMapper);
         ReflectionTestUtils.setField(service, "xianyuAccountMapper", accountMapper);
@@ -334,5 +351,22 @@ class WebSocketTokenServiceImplTest {
                 false
         ));
         verify(captchaService, times(1)).handleRequiredCaptcha(eq(88L), eq("stale-cookie"), anyString());
+        verify(stateServices.cookieStateService()).updateStatus(
+                eq(88L), eq(CookieStatus.EXPIRED), eq(true));
+    }
+
+    private static StateServices wireStateServices(WebSocketTokenServiceImpl service) {
+        CookieStateService cookieStateService = mock(CookieStateService.class);
+        AccountStateService accountStateService = mock(AccountStateService.class);
+        when(cookieStateService.updateStatus(any(), any(), anyBoolean())).thenReturn(true);
+        when(accountStateService.restoreNormalIfCaptchaRequired(any(), anyString())).thenReturn(true);
+        when(accountStateService.markCaptchaRequired(any(), anyString())).thenReturn(true);
+        ReflectionTestUtils.setField(service, "cookieStateService", cookieStateService);
+        ReflectionTestUtils.setField(service, "accountStateService", accountStateService);
+        return new StateServices(cookieStateService, accountStateService);
+    }
+
+    private record StateServices(CookieStateService cookieStateService,
+                                 AccountStateService accountStateService) {
     }
 }

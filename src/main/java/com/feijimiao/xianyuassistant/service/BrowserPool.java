@@ -9,6 +9,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.PreDestroy;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -134,10 +135,10 @@ public class BrowserPool {
     // 闲置超时时间（毫秒），默认5分钟
     private static final long IDLE_TIMEOUT = 5 * 60 * 1000;
 
-    private static final String CAPTCHA_BROWSER_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-    private static final String ACCEPT_LANGUAGE = "zh-CN,zh;q=0.9,en;q=0.8";
     private static final String GOOFISH_COOKIE_DOMAIN = ".goofish.com";
     private static final String TAOBAO_COOKIE_DOMAIN = ".taobao.com";
+
+    private final SliderBrowserFingerprintService sliderBrowserFingerprintService;
 
     // 浏览器实例池：accountId -> BrowserInstance
     private final ConcurrentHashMap<Long, BrowserInstance> pool = new ConcurrentHashMap<>();
@@ -148,7 +149,8 @@ public class BrowserPool {
     // 定时清理任务
     private final ScheduledExecutorService cleanupExecutor = Executors.newSingleThreadScheduledExecutor();
 
-    public BrowserPool() {
+    public BrowserPool(SliderBrowserFingerprintService sliderBrowserFingerprintService) {
+        this.sliderBrowserFingerprintService = sliderBrowserFingerprintService;
         // 启动定时清理任务，每分钟检查一次
         cleanupExecutor.scheduleAtFixedRate(this::cleanupIdleBrowsers, 1, 1, TimeUnit.MINUTES);
         log.info("浏览器池初始化完成，最大实例数: {}, 闲置超时: {}秒", MAX_SIZE, IDLE_TIMEOUT / 1000);
@@ -187,7 +189,7 @@ public class BrowserPool {
 
             // 创建新的浏览器实例
             log.info("创建新的浏览器实例: accountId={}, headless={}", accountId, headless);
-            instance = createBrowser(cookieText, headless);
+            instance = createBrowser(accountId, cookieText, headless);
             if (instance != null) {
                 pool.put(accountId, instance);
                 log.info("浏览器实例创建成功: accountId={}, 当前池大小: {}", accountId, pool.size());
@@ -213,8 +215,8 @@ public class BrowserPool {
     /**
      * 创建新的浏览器实例
      */
-    private BrowserInstance createBrowser(String cookieText, boolean headless) {
-        return createLocalBrowser(cookieText, headless);
+    private BrowserInstance createBrowser(Long accountId, String cookieText, boolean headless) {
+        return createLocalBrowser(accountId, cookieText, headless);
     }
 
     private BrowserInstance reuseExistingBrowserUnsafe(Long accountId, boolean createNewPage) {
@@ -252,36 +254,67 @@ public class BrowserPool {
     /**
      * 在本地创建浏览器实例
      */
-    private BrowserInstance createLocalBrowser(String cookieText, boolean headless) {
+    private BrowserInstance createLocalBrowser(Long accountId, String cookieText, boolean headless) {
         try {
+            SliderBrowserFingerprintService.BrowserProfile profile =
+                    sliderBrowserFingerprintService.profile(accountId);
+            List<String> args = new ArrayList<>(sliderBrowserFingerprintService.buildLaunchArgs(profile));
+            if (headless) {
+                args.add("--disable-gpu");
+            } else {
+                args.add("--start-maximized");
+            }
+            args.add("--remote-allow-origins=*");
+
+            // 优先使用 connectOverCDP 绕过 Playwright Runtime.Enable 检测
+            ExternalBrowserLauncher launcher = null;
             Playwright playwright = Playwright.create();
-            BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions()
-                    .setHeadless(headless)
-                    .setIgnoreDefaultArgs(List.of("--enable-automation"))
-                    .setArgs(buildLaunchArgs(headless));
-            launchOptions.setExecutablePath(PlaywrightBrowserUtils.resolveChromiumPath().orElseThrow());
+            Browser browser;
+            try {
+                Path profileDir = Path.of(System.getProperty("user.dir"), "browser_data", "user_" + accountId);
+                java.nio.file.Files.createDirectories(profileDir);
+                launcher = ExternalBrowserLauncher.launch(args, profileDir, accountId);
+                browser = playwright.chromium().connectOverCDP(launcher.getCdpUrl());
+                log.info("BrowserPool 使用 connectOverCDP 创建浏览器: accountId={}", accountId);
+            } catch (Exception e) {
+                log.warn("BrowserPool connectOverCDP 失败，回退 launch: accountId={}, error={}",
+                        accountId, e.getMessage());
+                if (launcher != null) {
+                    launcher.shutdown();
+                    launcher = null;
+                }
+                BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions()
+                        .setHeadless(headless)
+                        .setIgnoreDefaultArgs(List.of("--enable-automation"))
+                        .setArgs(args);
+                launchOptions.setExecutablePath(PlaywrightBrowserUtils.resolveChromiumPath().orElseThrow());
+                browser = playwright.chromium().launch(launchOptions);
+            }
 
-            Browser browser = playwright.chromium().launch(launchOptions);
-
-            // 准备Cookie列表
             List<Cookie> browserCookies = buildBrowserCookies(cookieText);
 
-            // 创建上下文时直接设置Cookie（使用storageState）
-            Browser.NewContextOptions contextOptions = new Browser.NewContextOptions()
-                .setViewportSize(1600, 900)
-                .setScreenSize(1600, 900)
-                .setDeviceScaleFactor(1)
-                .setIsMobile(false)
-                .setHasTouch(false)
-                .setUserAgent(CAPTCHA_BROWSER_USER_AGENT)
-                .setLocale("zh-CN")
-                .setTimezoneId("Asia/Shanghai")
-                .setExtraHTTPHeaders(buildExtraHttpHeaders());
+            BrowserContext context;
+            if (launcher != null && !browser.contexts().isEmpty()) {
+                context = browser.contexts().get(0);
+            } else {
+                Browser.NewContextOptions contextOptions = new Browser.NewContextOptions()
+                    .setViewportSize(profile.getViewportWidth(), profile.getViewportHeight())
+                    .setScreenSize(profile.getViewportWidth(), profile.getViewportHeight())
+                    .setDeviceScaleFactor(profile.getDeviceScaleFactor())
+                    .setIsMobile(false)
+                    .setHasTouch(false)
+                    .setUserAgent(profile.getUserAgent())
+                    .setLocale(profile.getLocale())
+                    .setTimezoneId(profile.getTimezoneId())
+                    .setExtraHTTPHeaders(sliderBrowserFingerprintService.extraHeaders(profile));
+                context = browser.newContext(contextOptions);
+            }
 
-            BrowserContext context = browser.newContext(contextOptions);
-
-            // 注入反检测脚本：隐藏 webdriver 等自动化特征
-            context.addInitScript(buildStealthInitScript());
+            // 注入反检测脚本（与滑块链路同源，由 fingerprint-chromium 底层指纹叠加 JS 层兜底）
+            String stealthScript = sliderBrowserFingerprintService.stealthScript(profile);
+            if (stealthScript != null && !stealthScript.isBlank()) {
+                context.addInitScript(stealthScript);
+            }
 
             // 在创建页面前注入Cookie
             if (!browserCookies.isEmpty()) {
@@ -290,98 +323,17 @@ public class BrowserPool {
             }
 
             Page page = context.newPage();
+            if (launcher == null) {
+                sliderBrowserFingerprintService.applyNetworkFingerprint(context, page, profile);
+            }
             BrowserInstance browserInstance = new BrowserInstance(playwright, browser, context, page, headless);
-            log.info("验证码浏览器创建成功");
+            log.info("验证码浏览器创建成功: accountId={}, profile={}, ua={}",
+                    accountId, profile.getProfileId(), profile.getUserAgent());
             return browserInstance;
         } catch (Exception e) {
-            log.error("创建浏览器实例失败", e);
+            log.error("创建浏览器实例失败: accountId={}", accountId, e);
             return null;
         }
-    }
-
-    private List<String> buildLaunchArgs(boolean headless) {
-        List<String> args = new ArrayList<>();
-        args.add("--no-sandbox");
-        args.add("--disable-setuid-sandbox");
-        args.add("--disable-dev-shm-usage");
-
-        // 反检测：隐藏自动化控制特征，同时保持参数尽量接近普通 Chromium。
-        args.add("--disable-blink-features=AutomationControlled");
-
-        // 模拟真实浏览器环境
-        args.add("--no-first-run");
-        args.add("--no-default-browser-check");
-        args.add("--force-color-profile=srgb");
-        args.add("--password-store=basic");
-        args.add("--use-mock-keychain");
-        args.add("--mute-audio");
-        args.add("--window-size=1600,900");
-
-        // 语言和地区设置
-        args.add("--lang=zh-CN");
-        args.add("--accept-lang=" + ACCEPT_LANGUAGE);
-
-        if (headless) {
-            args.add("--disable-gpu");
-        } else {
-            args.add("--start-maximized");
-        }
-        args.add("--remote-allow-origins=*");
-        return args;
-    }
-
-    private Map<String, String> buildExtraHttpHeaders() {
-        Map<String, String> headers = new HashMap<>();
-        headers.put("Accept-Language", ACCEPT_LANGUAGE);
-        headers.put("sec-ch-ua", "\"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"");
-        headers.put("sec-ch-ua-mobile", "?0");
-        headers.put("sec-ch-ua-platform", "\"Windows\"");
-        return headers;
-    }
-
-    private String buildStealthInitScript() {
-        return String.format("""
-                (() => {
-                    const defineGetter = (target, key, getter) => {
-                        try {
-                            Object.defineProperty(target, key, { get: getter, configurable: true });
-                        } catch (e) {}
-                    };
-                    defineGetter(Navigator.prototype, 'webdriver', () => undefined);
-                    defineGetter(Navigator.prototype, 'languages', () => ['zh-CN', 'zh', 'en']);
-                    defineGetter(Navigator.prototype, 'platform', () => 'Win32');
-                    defineGetter(Navigator.prototype, 'vendor', () => 'Google Inc.');
-                    defineGetter(Navigator.prototype, 'userAgent', () => '%s');
-                    defineGetter(Navigator.prototype, 'hardwareConcurrency', () => 8);
-                    defineGetter(Navigator.prototype, 'deviceMemory', () => 8);
-                    defineGetter(Navigator.prototype, 'plugins', () => [
-                        {name: 'Chrome PDF Plugin'},
-                        {name: 'Chrome PDF Viewer'},
-                        {name: 'Native Client'}
-                    ]);
-                    defineGetter(Navigator.prototype, 'mimeTypes', () => [
-                        {type: 'application/pdf'},
-                        {type: 'application/x-google-chrome-pdf'}
-                    ]);
-                    if (!window.chrome) {
-                        window.chrome = {};
-                    }
-                    window.chrome.runtime = window.chrome.runtime || {};
-                    window.chrome.app = window.chrome.app || {};
-                    const originalQuery = window.navigator.permissions && window.navigator.permissions.query;
-                    if (originalQuery) {
-                        window.navigator.permissions.query = (parameters) => (
-                            parameters && parameters.name === 'notifications'
-                                ? Promise.resolve({ state: Notification.permission })
-                                : originalQuery(parameters)
-                        );
-                    }
-                    delete window._phantom;
-                    delete window.phantom;
-                    delete window.callPhantom;
-                    delete window._selenium;
-                })();
-                """, CAPTCHA_BROWSER_USER_AGENT);
     }
 
     private List<Cookie> buildBrowserCookies(String cookieText) {

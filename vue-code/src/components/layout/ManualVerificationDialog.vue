@@ -23,6 +23,7 @@ const dialogVisible = computed({
 
 const accountLabel = computed(() => state.value.accountId ? `账号 ${state.value.accountId}` : '闲鱼账号')
 const imageUrl = computed(() => state.value.screenshotUrl)
+const confirmText = computed(() => state.value.confirming ? '读取中...' : '我已处理')
 
 const handleImageError = () => {
   store.manualVerification.screenshotUrl = ''
@@ -33,6 +34,10 @@ const openConnection = async () => {
   if (!accountId) return
   store.closeManualVerification()
   await router.push(`/connection/${accountId}`)
+}
+
+const confirmDone = async () => {
+  await store.confirmManualVerificationDone()
 }
 </script>
 
@@ -62,6 +67,7 @@ const openConnection = async () => {
           <div>
             <strong>{{ state.message || '账号登录不成功，需要人工处理' }}</strong>
             <p>{{ state.detail || '请使用闲鱼 App 扫码，或按截图中的页面提示完成人脸、短信等验证。' }}</p>
+            <p v-if="state.lastError" class="manual-verification__error">{{ state.lastError }}</p>
           </div>
         </div>
 
@@ -111,9 +117,9 @@ const openConnection = async () => {
           <IconWifi />
           <span>连接详情</span>
         </el-button>
-        <el-button type="primary" @click="store.closeManualVerification">
+        <el-button type="primary" :loading="state.confirming" @click="confirmDone">
           <IconCheck />
-          <span>我已处理</span>
+          <span>{{ confirmText }}</span>
         </el-button>
       </div>
     </template>
@@ -195,6 +201,10 @@ const openConnection = async () => {
   color: var(--app-text-muted);
   font-size: 13px;
   line-height: 1.55;
+}
+
+.manual-verification__notice .manual-verification__error {
+  color: #f56c6c;
 }
 
 .manual-verification__preview {

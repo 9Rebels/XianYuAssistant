@@ -11,6 +11,7 @@ class SliderTrajectoryPlannerTest {
     @Test
     void trajectoryUsesFittsSizedOvershootAndReturnsNearTarget() {
         SliderTrajectoryPlanner planner = new SliderTrajectoryPlanner();
+        planner.setLearner(new FixedProfileLearner("standard"), 1L);
 
         SliderTrajectoryPlanner.TrajectoryPlan plan = planner.plan(260D, 1);
         List<SliderTrajectoryPlanner.TrajectoryPoint> points = plan.getPoints();
@@ -36,5 +37,18 @@ class SliderTrajectoryPlannerTest {
         double current = SliderTrajectoryPlanner.perlinNoise1d(1.21D, 123D);
 
         assertTrue(Math.abs(current - previous) < 0.08D);
+    }
+
+    private static class FixedProfileLearner extends SliderTrajectoryLearner {
+        private final String profileName;
+
+        FixedProfileLearner(String profileName) {
+            this.profileName = profileName;
+        }
+
+        @Override
+        public String recommendProfile(long accountId) {
+            return profileName;
+        }
     }
 }

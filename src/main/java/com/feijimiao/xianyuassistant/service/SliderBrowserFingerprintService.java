@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -47,7 +48,7 @@ public class SliderBrowserFingerprintService {
         this.sliderProperties = sliderProperties;
     }
 
-    BrowserProfile profile(Long accountId) {
+    public BrowserProfile profile(Long accountId) {
         RuntimeVersion runtime = resolveRuntimeVersion();
         int viewportWidth = 1600;
         int viewportHeight = 900;
@@ -102,13 +103,47 @@ public class SliderBrowserFingerprintService {
         }
     }
 
-    Map<String, String> extraHeaders(BrowserProfile profile) {
+    public Map<String, String> extraHeaders(BrowserProfile profile) {
         return Map.of(
                 "Accept-Language", profile.getAcceptLanguage(),
                 "sec-ch-ua", secChUa(profile),
                 "sec-ch-ua-mobile", "?0",
                 "sec-ch-ua-platform", "\"Windows\""
         );
+    }
+
+    /**
+     * 构建 fingerprint-chromium 启动参数。
+     * 不传 --fingerprint=<seed> 时进程等价裸跑 ungoogled-chromium，底层指纹无差异化。
+     * 调用方可以在返回值上 append 自己的特殊 args（如 --start-maximized、--disable-gpu）。
+     */
+    public List<String> buildLaunchArgs(BrowserProfile profile) {
+        List<String> args = new ArrayList<>();
+        args.add("--no-sandbox");
+        args.add("--disable-setuid-sandbox");
+        args.add("--disable-dev-shm-usage");
+        args.add("--no-first-run");
+        args.add("--no-default-browser-check");
+        args.add("--disable-blink-features=AutomationControlled");
+        args.add("--window-size=" + profile.getViewportWidth() + "," + profile.getViewportHeight());
+        args.add("--window-position=0,0");
+        args.add("--lang=" + profile.getLocale());
+        args.add("--accept-lang=" + profile.getAcceptLanguage());
+        args.add("--mute-audio");
+        args.add("--force-color-profile=srgb");
+        args.add("--password-store=basic");
+        args.add("--use-mock-keychain");
+        args.add("--fingerprint=" + profile.getFingerprintSeed());
+        args.add("--fingerprint-platform=windows");
+        args.add("--fingerprint-platform-version=10.0.0");
+        args.add("--fingerprint-brand=Chrome");
+        args.add("--fingerprint-brand-version=" + profile.getMajorVersion());
+        args.add("--fingerprint-hardware-concurrency=" + profile.getHardwareConcurrency());
+        args.add("--timezone=" + profile.getTimezoneId());
+        args.add("--use-gl=angle");
+        args.add("--use-angle=swiftshader-webgl");
+        args.add("--enable-unsafe-swiftshader");
+        return args;
     }
 
     private RuntimeVersion resolveRuntimeVersion() {
@@ -129,7 +164,7 @@ public class SliderBrowserFingerprintService {
         return new RuntimeVersion(FALLBACK_CHROME_VERSION, FALLBACK_CHROME_MAJOR, "fallback", "");
     }
 
-    void applyNetworkFingerprint(BrowserContext context, Page page, BrowserProfile profile) {
+    public void applyNetworkFingerprint(BrowserContext context, Page page, BrowserProfile profile) {
         if (context == null || page == null || page.isClosed()) {
             return;
         }
@@ -151,7 +186,7 @@ public class SliderBrowserFingerprintService {
         }
     }
 
-    String stealthScript(BrowserProfile profile) {
+    public String stealthScript(BrowserProfile profile) {
         String mode = resolveStealthMode();
         if (STEALTH_MODE_OFF.equals(mode)) {
             log.info("滑块 stealth 已关闭: profile={}", profile.getProfileId());
@@ -343,10 +378,41 @@ public class SliderBrowserFingerprintService {
                         ]);
                     }
                     // WebGL / Canvas / Audio 指纹由 fingerprint-chromium 底层 --fingerprint=<seed> 接管，
-                    // 此处不再在 JS 层重写 WebGLRenderingContext.getParameter，避免与底层值产生穿帮差异。
+                    // 但 Docker 无 GPU 时 renderer 会暴露 SwiftShader/llvmpipe，必须在 JS 层覆盖。
+                    try {
+                        const spoofRenderer = 'ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+                        const spoofVendor = 'Google Inc. (Intel)';
+                        const getParameterProto = WebGLRenderingContext.prototype.getParameter;
+                        WebGLRenderingContext.prototype.getParameter = function(param) {
+                            const ext = this.getExtension('WEBGL_debug_renderer_info');
+                            if (ext) {
+                                if (param === ext.UNMASKED_RENDERER_WEBGL) return spoofRenderer;
+                                if (param === ext.UNMASKED_VENDOR_WEBGL) return spoofVendor;
+                            }
+                            if (param === 37446) return spoofRenderer;
+                            if (param === 37445) return spoofVendor;
+                            return getParameterProto.call(this, param);
+                        };
+                        if (typeof WebGL2RenderingContext !== 'undefined') {
+                            const getParameter2Proto = WebGL2RenderingContext.prototype.getParameter;
+                            WebGL2RenderingContext.prototype.getParameter = function(param) {
+                                const ext = this.getExtension('WEBGL_debug_renderer_info');
+                                if (ext) {
+                                    if (param === ext.UNMASKED_RENDERER_WEBGL) return spoofRenderer;
+                                    if (param === ext.UNMASKED_VENDOR_WEBGL) return spoofVendor;
+                                }
+                                if (param === 37446) return spoofRenderer;
+                                if (param === 37445) return spoofVendor;
+                                return getParameter2Proto.call(this, param);
+                            };
+                        }
+                    } catch (e) {}
                     const originalToString = Function.prototype.toString;
+                    const nativeFnStr = 'function getParameter() { [native code] }';
                     Function.prototype.toString = function() {
                         if (this === window.navigator.permissions.query) return 'function query() { [native code] }';
+                        if (this === WebGLRenderingContext.prototype.getParameter) return nativeFnStr;
+                        if (typeof WebGL2RenderingContext !== 'undefined' && this === WebGL2RenderingContext.prototype.getParameter) return nativeFnStr;
                         return originalToString.call(this);
                     };
                     [
@@ -493,7 +559,7 @@ public class SliderBrowserFingerprintService {
     }
 
     @Value
-    static class BrowserProfile {
+    public static class BrowserProfile {
         String profileId;
         String userAgent;
         String fullVersion;

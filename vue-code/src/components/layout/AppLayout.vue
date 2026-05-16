@@ -4,6 +4,7 @@ import { RouterView, useRoute } from 'vue-router'
 import NavMenu from './NavMenu.vue'
 import AppNotificationCenter from './AppNotificationCenter.vue'
 import ManualVerificationDialog from './ManualVerificationDialog.vue'
+import ManualVerificationFloatingNotice from './ManualVerificationFloatingNotice.vue'
 import ThemeToggle from './ThemeToggle.vue'
 
 // 导入所有页面图标
@@ -211,6 +212,7 @@ onUnmounted(() => {
     </el-container>
 
     <AppNotificationCenter />
+    <ManualVerificationFloatingNotice />
     <ManualVerificationDialog />
   </div>
 </template>

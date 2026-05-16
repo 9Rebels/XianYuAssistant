@@ -2,15 +2,19 @@ package com.feijimiao.xianyuassistant.service.impl;
 
 import com.feijimiao.xianyuassistant.common.ResultObject;
 import com.feijimiao.xianyuassistant.controller.dto.MsgContextReqDTO;
+import com.feijimiao.xianyuassistant.controller.dto.OnlineConversationDTO;
 import com.feijimiao.xianyuassistant.entity.XianyuAccount;
 import com.feijimiao.xianyuassistant.entity.XianyuChatMessage;
+import com.feijimiao.xianyuassistant.entity.XianyuConversationState;
 import com.feijimiao.xianyuassistant.entity.XianyuGoodsInfo;
 import com.feijimiao.xianyuassistant.mapper.XianyuAccountMapper;
 import com.feijimiao.xianyuassistant.mapper.XianyuChatMessageMapper;
 import com.feijimiao.xianyuassistant.mapper.XianyuGoodsInfoMapper;
+import com.feijimiao.xianyuassistant.service.ConversationReadStateService;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.Map;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -197,6 +201,60 @@ class ChatMessageServiceImplTest {
 
         assertEquals(200, result.getCode());
         assertEquals(1, ((List<?>) result.getData()).size());
+    }
+
+    @Test
+    void onlineConversationsShowUnreadWhenLatestOutgoingIsAfterReadReceipt() {
+        ChatMessageServiceImpl service = new ChatMessageServiceImpl();
+        XianyuChatMessageMapper chatMessageMapper = mock(XianyuChatMessageMapper.class);
+        XianyuAccountMapper accountMapper = mock(XianyuAccountMapper.class);
+        ConversationReadStateService readStateService = mock(ConversationReadStateService.class);
+        ReflectionTestUtils.setField(service, "chatMessageMapper", chatMessageMapper);
+        ReflectionTestUtils.setField(service, "accountMapper", accountMapper);
+        ReflectionTestUtils.setField(service, "readStateService", readStateService);
+
+        XianyuAccount account = new XianyuAccount();
+        account.setId(4L);
+        account.setUnb("seller-1");
+        when(accountMapper.selectById(4L)).thenReturn(account);
+
+        XianyuChatMessage latestOutgoing = new XianyuChatMessage();
+        latestOutgoing.setId(21L);
+        latestOutgoing.setXianyuAccountId(4L);
+        latestOutgoing.setSId("buyer@goofish");
+        latestOutgoing.setPnmId("outgoing.PNM");
+        latestOutgoing.setSenderUserId("seller-1");
+        latestOutgoing.setSenderUserName("seller");
+        latestOutgoing.setMsgContent("自己下单的 能拍就有的");
+        latestOutgoing.setMessageTime(1778914383000L);
+
+        XianyuChatMessage peerMessage = new XianyuChatMessage();
+        peerMessage.setId(20L);
+        peerMessage.setXianyuAccountId(4L);
+        peerMessage.setSId("buyer@goofish");
+        peerMessage.setPnmId("peer.PNM");
+        peerMessage.setSenderUserId("buyer");
+        peerMessage.setSenderUserName("买家");
+        peerMessage.setMsgContent("你好");
+        peerMessage.setMessageTime(1778914020000L);
+
+        XianyuConversationState state = new XianyuConversationState();
+        state.setSId("buyer@goofish");
+        state.setReadStatus(1);
+        state.setReadTimestamp(1778914020000L);
+
+        when(chatMessageMapper.findRecentForConversations(4L, 160))
+                .thenReturn(List.of(latestOutgoing, peerMessage));
+        when(readStateService.findStates(eq(4L), any()))
+                .thenReturn(Map.of("buyer@goofish", state));
+
+        @SuppressWarnings("unchecked")
+        List<OnlineConversationDTO> conversations =
+                (List<OnlineConversationDTO>) service.getOnlineConversations(4L, 1).getData();
+
+        assertEquals(1, conversations.size());
+        assertEquals(0, conversations.get(0).getReadStatus());
+        assertEquals("未读", conversations.get(0).getReadStatusText());
     }
 
     private String messageJson(String receiver) {

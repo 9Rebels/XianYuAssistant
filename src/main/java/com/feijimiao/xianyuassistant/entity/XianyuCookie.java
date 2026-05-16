@@ -1,6 +1,7 @@
 package com.feijimiao.xianyuassistant.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -64,4 +65,16 @@ public class XianyuCookie {
      * Token过期时间戳（毫秒）
      */
     private Long tokenExpireTime;
+
+    /**
+     * 状态变更原因。灰度字段：未执行DDL前不参与默认查询。
+     */
+    @TableField(select = false)
+    private String stateReason;
+
+    /**
+     * 状态变更时间。灰度字段：未执行DDL前不参与默认查询。
+     */
+    @TableField(select = false)
+    private String stateUpdatedTime;
 }

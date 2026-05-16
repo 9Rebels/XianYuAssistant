@@ -2,6 +2,7 @@ package com.feijimiao.xianyuassistant.controller;
 
 import com.feijimiao.xianyuassistant.common.ResultObject;
 import com.feijimiao.xianyuassistant.entity.XianyuAccount;
+import com.feijimiao.xianyuassistant.enums.CookieStatus;
 import com.feijimiao.xianyuassistant.controller.dto.UpdateCookieReqDTO;
 import com.feijimiao.xianyuassistant.controller.dto.UpdateCookieRespDTO;
 import com.feijimiao.xianyuassistant.service.CookieRefreshService;
@@ -11,6 +12,8 @@ import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 /**
  * WebSocket控制器
@@ -126,11 +129,11 @@ public class WebSocketController {
             }
             
             // 检查Cookie状态
-            if (cookie.getCookieStatus() != null && cookie.getCookieStatus() == 2) {
+            if (CookieStatus.isExpired(cookie.getCookieStatus())) {
                 return "WebSocket连接启动失败：Cookie已过期，请更新Cookie后重试";
             }
             
-            if (cookie.getCookieStatus() != null && cookie.getCookieStatus() == 3) {
+            if (CookieStatus.isInvalid(cookie.getCookieStatus())) {
                 return "WebSocket连接启动失败：Cookie已失效，请重新获取Cookie";
             }
             
@@ -536,6 +539,65 @@ public class WebSocketController {
             logPasswordLogin(accountId, false, e.getMessage());
             return ResultObject.failed("账号密码登录失败: " + e.getMessage());
         }
+    }
+
+    /**
+     * 确认人工验证已完成，读取等待中浏览器会话的 Cookie 并写回账号。
+     */
+    @PostMapping("/confirmManualVerification")
+    public ResultObject<String> confirmManualVerification(@RequestBody PasswordLoginReqDTO reqDTO) {
+        Long accountId = reqDTO == null ? null : reqDTO.getXianyuAccountId();
+        try {
+            log.info("确认人工验证完成: xianyuAccountId={}", accountId);
+            if (accountId == null) {
+                return ResultObject.failed("账号ID不能为空");
+            }
+
+            com.feijimiao.xianyuassistant.service.PasswordLoginService passwordLoginService =
+                    applicationContext.getBean(com.feijimiao.xianyuassistant.service.PasswordLoginService.class);
+            com.feijimiao.xianyuassistant.service.PasswordLoginService.ManualVerificationConfirmResult result =
+                    passwordLoginService.confirmManualVerification(accountId);
+            if (!result.isSuccess() || result.getCookieText() == null || result.getCookieText().isBlank()) {
+                return ResultObject.failed(result.getMessage());
+            }
+
+            String unb = extractUnbFromCookie(result.getCookieText());
+            if (unb == null || unb.isEmpty()) {
+                logPasswordLogin(accountId, false, "人工验证确认返回的Cookie缺少UNB");
+                return ResultObject.failed("人工验证确认返回的Cookie缺少UNB，已拒绝更新");
+            }
+
+            com.feijimiao.xianyuassistant.service.AccountService accountService =
+                    applicationContext.getBean(com.feijimiao.xianyuassistant.service.AccountService.class);
+            boolean updated = accountService.updateAccountCookie(accountId, unb, result.getCookieText());
+            if (!updated) {
+                logPasswordLogin(accountId, false, "人工验证Cookie身份与当前账号不一致");
+                return ResultObject.failed("Cookie身份与当前账号不一致，已拒绝跨账号更新");
+            }
+
+            com.feijimiao.xianyuassistant.service.WebSocketTokenService tokenService =
+                    applicationContext.getBean(com.feijimiao.xianyuassistant.service.WebSocketTokenService.class);
+            tokenService.clearToken(accountId);
+            tokenService.clearCaptchaWait(accountId);
+
+            logPasswordLogin(accountId, true, null);
+            return ResultObject.success("人工验证已确认，Cookie 已读取并写回");
+        } catch (Exception e) {
+            log.error("确认人工验证完成失败: xianyuAccountId={}", accountId, e);
+            logPasswordLogin(accountId, false, e.getMessage());
+            return ResultObject.failed("确认人工验证失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 查询服务端仍在等待处理的人工验证会话。
+     */
+    @GetMapping("/pendingManualVerification")
+    public ResultObject<List<com.feijimiao.xianyuassistant.service.PasswordLoginService.ManualVerificationState>>
+    pendingManualVerification() {
+        com.feijimiao.xianyuassistant.service.PasswordLoginService passwordLoginService =
+                applicationContext.getBean(com.feijimiao.xianyuassistant.service.PasswordLoginService.class);
+        return ResultObject.success(passwordLoginService.pendingManualVerifications());
     }
 
     private void logPasswordLogin(Long accountId, boolean success, String errorMessage) {

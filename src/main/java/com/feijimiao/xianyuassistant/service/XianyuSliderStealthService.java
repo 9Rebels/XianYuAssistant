@@ -83,7 +83,9 @@ public class XianyuSliderStealthService {
             context.addInitScript(sliderBrowserFingerprintService.stealthScript(browserProfile));
             injectInitialCookies(context, initialCookieText);
             Page page = context.newPage();
-            sliderBrowserFingerprintService.applyNetworkFingerprint(context, page, browserProfile);
+            if (session.getExternalLauncher() == null) {
+                sliderBrowserFingerprintService.applyNetworkFingerprint(context, page, browserProfile);
+            }
             Consumer<Response> responseListener =
                     response -> collectSetCookieUpdates(response, observedSetCookieUpdates);
             context.onResponse(responseListener);
@@ -224,11 +226,22 @@ public class XianyuSliderStealthService {
 
     private boolean waitForManualVerification(BrowserContext context, Page page, Long accountId, int maxWaitSeconds) {
         long deadline = System.currentTimeMillis() + maxWaitSeconds * 1000L;
-        // 真实登录态判定：BrowserContext 中必须出现全部核心登录 Cookie（REQUIRED_FIELDS）。
-        // URL 离开 captcha/punish 只代表前端 SPA 跳走，不能等价于扫码完成，11:14 误判 bug 由此而来。
         List<String> required = CaptchaCookieMergeService.REQUIRED_FIELDS;
         long pollIntervalMs = 3000L;
         long lastMissingLogMs = 0L;
+
+        // 先拍一个 baseline 快照：持久化 profile 中可能已有旧 Cookie，
+        // 必须检测到 Cookie 值发生变化才算验证通过，而不是仅检查存在性。
+        Map<String, String> baseline = snapshotContextCookies(context);
+        Map<String, String> baselineRequired = new LinkedHashMap<>();
+        for (String name : required) {
+            String v = baseline.get(name);
+            if (v != null && !v.isBlank()) {
+                baselineRequired.put(name, v);
+            }
+        }
+        boolean baselineHasAll = baselineRequired.size() == required.size();
+
         while (System.currentTimeMillis() < deadline) {
             try {
                 page.waitForTimeout(pollIntervalMs);
@@ -245,14 +258,37 @@ public class XianyuSliderStealthService {
                     }
                 }
                 if (missing.isEmpty()) {
-                    log.info("[SliderRecovery] 人工验证完成（检测到全部核心登录 Cookie）: accountId={}", accountId);
-                    return true;
+                    if (!baselineHasAll) {
+                        // baseline 缺少某些字段，现在全部出现了 → 确认验证通过
+                        log.info("[SliderRecovery] 人工验证完成（检测到全部核心登录 Cookie，baseline 缺失已补齐）: accountId={}", accountId);
+                        return true;
+                    }
+                    // baseline 已有全部字段，需要检测值是否变化
+                    boolean anyChanged = false;
+                    for (String name : required) {
+                        String oldVal = baselineRequired.get(name);
+                        String newVal = cookies.get(name);
+                        if (oldVal != null && newVal != null && !oldVal.equals(newVal)) {
+                            anyChanged = true;
+                            log.info("[SliderRecovery] Cookie '{}' 值已变化，确认人工验证通过: accountId={}", name, accountId);
+                            break;
+                        }
+                    }
+                    if (anyChanged) {
+                        log.info("[SliderRecovery] 人工验证完成（核心 Cookie 值已刷新）: accountId={}", accountId);
+                        return true;
+                    }
                 }
                 long now = System.currentTimeMillis();
                 if (now - lastMissingLogMs > 15000L) {
                     long remaining = (deadline - now) / 1000L;
-                    log.info("[SliderRecovery] 等待人工扫码完成: accountId={}, 缺失={}, 剩余{}s",
-                            accountId, missing, remaining);
+                    if (!missing.isEmpty()) {
+                        log.info("[SliderRecovery] 等待人工扫码完成: accountId={}, 缺失={}, 剩余{}s",
+                                accountId, missing, remaining);
+                    } else {
+                        log.info("[SliderRecovery] 等待人工扫码完成: accountId={}, Cookie存在但值未变化, 剩余{}s",
+                                accountId, remaining);
+                    }
                     lastMissingLogMs = now;
                 }
             } catch (Exception e) {
@@ -384,12 +420,27 @@ public class XianyuSliderStealthService {
         if (accountId != null) {
             try {
                 Path profileDir = accountProfileDir(accountId);
+                List<String> args = sliderBrowserFingerprintService.buildLaunchArgs(browserProfile);
+                args = new ArrayList<>(args);
+                args.add("--remote-allow-origins=*");
+                ExternalBrowserLauncher launcher = ExternalBrowserLauncher.launch(args, profileDir, accountId);
+                Browser browser = playwright.chromium().connectOverCDP(launcher.getCdpUrl());
+                BrowserContext context = browser.contexts().isEmpty()
+                        ? browser.newContext() : browser.contexts().get(0);
+                log.info("账号{}滑块浏览器已使用 connectOverCDP (绕过 Runtime.Enable): profileDir={}", accountId, profileDir);
+                return BrowserSession.external(browser, context, launcher);
+            } catch (Exception e) {
+                log.warn("账号{} connectOverCDP 启动失败，回退 launchPersistentContext: {}",
+                        accountId, e.getMessage());
+            }
+            try {
+                Path profileDir = accountProfileDir(accountId);
                 BrowserContext context = playwright.chromium()
                         .launchPersistentContext(profileDir, buildPersistentContextOptions(browserProfile));
-                log.info("账号{}滑块浏览器已使用 persistent profile: {}", accountId, profileDir);
+                log.info("账号{}滑块浏览器回退 persistent profile: {}", accountId, profileDir);
                 return BrowserSession.persistent(context);
             } catch (Exception e) {
-                log.warn("账号{} persistent profile 启动失败，回退干净种子上下文: {}",
+                log.warn("账号{} persistent profile 启动也失败，回退干净种子上下文: {}",
                         accountId, e.getMessage());
             }
         }
@@ -420,7 +471,7 @@ public class XianyuSliderStealthService {
                 new BrowserType.LaunchPersistentContextOptions()
                         .setHeadless(shouldUseHeadless())
                         .setIgnoreDefaultArgs(List.of("--enable-automation"))
-                        .setArgs(buildLaunchArgs(browserProfile))
+                        .setArgs(sliderBrowserFingerprintService.buildLaunchArgs(browserProfile))
                         .setViewportSize(browserProfile.getViewportWidth(), browserProfile.getViewportHeight())
                         .setScreenSize(browserProfile.getViewportWidth(), browserProfile.getViewportHeight())
                         .setDeviceScaleFactor(browserProfile.getDeviceScaleFactor())
@@ -443,7 +494,7 @@ public class XianyuSliderStealthService {
         BrowserType.LaunchOptions options = new BrowserType.LaunchOptions()
                 .setHeadless(shouldUseHeadless())
                 .setIgnoreDefaultArgs(List.of("--enable-automation"))
-                .setArgs(buildLaunchArgs(browserProfile));
+                .setArgs(sliderBrowserFingerprintService.buildLaunchArgs(browserProfile));
         resolveProxy().ifPresent(options::setProxy);
         PlaywrightBrowserUtils.resolveChromiumPath().ifPresent(options::setExecutablePath);
         return options;
@@ -517,32 +568,6 @@ public class XianyuSliderStealthService {
                 ? "http"
                 : config.getType().trim().toLowerCase();
         return type + "://" + config.getHost().trim() + ":" + config.getPort();
-    }
-
-    private List<String> buildLaunchArgs(SliderBrowserFingerprintService.BrowserProfile browserProfile) {
-        return List.of(
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--no-first-run",
-                "--disable-blink-features=AutomationControlled",
-                "--window-size=" + browserProfile.getViewportWidth() + "," + browserProfile.getViewportHeight(),
-                "--lang=" + browserProfile.getLocale(),
-                "--accept-lang=" + browserProfile.getAcceptLanguage(),
-                "--mute-audio",
-                "--no-default-browser-check",
-                "--force-color-profile=srgb",
-                "--password-store=basic",
-                "--use-mock-keychain",
-                // ↓ adryfish/fingerprint-chromium 底层指纹开关：不传 --fingerprint 等价裸跑 ungoogled-chromium
-                "--fingerprint=" + browserProfile.getFingerprintSeed(),
-                "--fingerprint-platform=windows",
-                "--fingerprint-platform-version=10.0.0",
-                "--fingerprint-brand=Chrome",
-                "--fingerprint-brand-version=" + browserProfile.getMajorVersion(),
-                "--fingerprint-hardware-concurrency=" + browserProfile.getHardwareConcurrency(),
-                "--timezone=" + browserProfile.getTimezoneId()
-        );
     }
 
     private List<Cookie> buildSeedCookies(String cookieText) {
@@ -689,13 +714,18 @@ public class XianyuSliderStealthService {
     private static class BrowserSession implements AutoCloseable {
         Browser browser;
         BrowserContext context;
+        ExternalBrowserLauncher externalLauncher;
 
         static BrowserSession persistent(BrowserContext context) {
-            return new BrowserSession(null, context);
+            return new BrowserSession(null, context, null);
         }
 
         static BrowserSession regular(Browser browser, BrowserContext context) {
-            return new BrowserSession(browser, context);
+            return new BrowserSession(browser, context, null);
+        }
+
+        static BrowserSession external(Browser browser, BrowserContext context, ExternalBrowserLauncher launcher) {
+            return new BrowserSession(browser, context, launcher);
         }
 
         @Override
@@ -709,6 +739,12 @@ public class XianyuSliderStealthService {
             try {
                 if (browser != null && browser.isConnected()) {
                     browser.close();
+                }
+            } catch (Exception ignored) {
+            }
+            try {
+                if (externalLauncher != null) {
+                    externalLauncher.shutdown();
                 }
             } catch (Exception ignored) {
             }

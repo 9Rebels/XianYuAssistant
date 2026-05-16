@@ -13,6 +13,9 @@ import org.apache.ibatis.annotations.Select;
  */
 @Mapper
 public interface XianyuOrderMapper extends BaseMapper<XianyuOrder> {
+
+    @Select("SELECT * FROM xianyu_order WHERE xianyu_account_id = #{accountId} AND order_id = #{orderId} LIMIT 1")
+    XianyuOrder selectByAccountIdAndOrderId(@Param("accountId") Long accountId, @Param("orderId") String orderId);
     
     /**
      * 分页查询订单列表（联表查询账号备注和自动发货状态）
@@ -76,7 +79,7 @@ public interface XianyuOrderMapper extends BaseMapper<XianyuOrder> {
             "    od.receiver_city AS receiverCity " +
             "  FROM xianyu_goods_order r " +
             "  LEFT JOIN xianyu_account a ON r.xianyu_account_id = a.id " +
-            "  LEFT JOIN xianyu_goods g ON r.xy_goods_id = g.xy_good_id " +
+            "  LEFT JOIN xianyu_goods g ON r.xianyu_account_id = g.xianyu_account_id AND r.xy_goods_id = g.xy_good_id " +
             "  LEFT JOIN xianyu_order od ON r.xianyu_account_id = od.xianyu_account_id AND r.order_id = od.order_id " +
             "  WHERE r.order_id IS NOT NULL AND r.order_id != '' " +
             "    AND NOT EXISTS ( " +
@@ -85,6 +88,12 @@ public interface XianyuOrderMapper extends BaseMapper<XianyuOrder> {
             "    ) " +
             ") merged " +
             "WHERE 1=1 " +
+            "  AND NOT EXISTS ( " +
+            "    SELECT 1 FROM xianyu_goods gx " +
+            "    WHERE gx.xy_good_id = merged.xyGoodsId " +
+            "      AND gx.xianyu_account_id IS NOT NULL " +
+            "      AND gx.xianyu_account_id != merged.xianyuAccountId " +
+            "  ) " +
             "<if test='xianyuAccountId != null'> " +
             "  AND merged.xianyuAccountId = #{xianyuAccountId} " +
             "</if> " +

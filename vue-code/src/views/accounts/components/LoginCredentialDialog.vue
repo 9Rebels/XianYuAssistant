@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { updateAccount } from '@/api/account'
+import { getLoginCredential, updateAccount } from '@/api/account'
+import { passwordLogin } from '@/api/websocket'
 import { showSuccess, showError } from '@/utils'
 import { getAccountDisplayName } from '@/utils/accountDisplay'
 import type { Account } from '@/types'
@@ -23,47 +24,119 @@ const formData = ref({
   loginPassword: '',
   clearPassword: false
 })
+const saving = ref(false)
+const loggingIn = ref(false)
+const loadingCredential = ref(false)
+const showPassword = ref(false)
 
 const accountName = computed(() => props.account ? getAccountDisplayName(props.account) : '')
+const originalLoginUsername = ref('')
+const originalLoginPassword = ref('')
+const hasSavedLoginPassword = computed(() => Boolean(originalLoginPassword.value))
+const hasCredentialChanges = computed(() => {
+  return formData.value.loginUsername.trim() !== originalLoginUsername.value
+    || formData.value.loginPassword !== originalLoginPassword.value
+})
+const canPasswordLogin = computed(() => {
+  if (!props.account || formData.value.clearPassword) return false
+  return Boolean(formData.value.loginUsername.trim() && (hasSavedLoginPassword.value || formData.value.loginPassword))
+})
+const loginButtonText = computed(() => {
+  if (loggingIn.value) return '登录中...'
+  return hasCredentialChanges.value ? '保存并登录' : '账号密码登录'
+})
 
-watch(() => [props.modelValue, props.account] as const, ([visible, account]) => {
+watch(() => [props.modelValue, props.account] as const, async ([visible, account]) => {
   if (!visible || !account) return
   formData.value = {
     loginUsername: account.loginUsername || '',
     loginPassword: '',
     clearPassword: false
   }
+  originalLoginUsername.value = account.loginUsername || ''
+  originalLoginPassword.value = ''
+  showPassword.value = false
+  loadingCredential.value = true
+  try {
+    const response = await getLoginCredential(account.id)
+    if (response.code === 0 || response.code === 200) {
+      const credential = response.data
+      originalLoginUsername.value = credential?.loginUsername || ''
+      originalLoginPassword.value = credential?.loginPassword || ''
+      formData.value.loginUsername = originalLoginUsername.value
+      formData.value.loginPassword = originalLoginPassword.value
+    } else {
+      throw new Error(response.msg || '加载登录凭据失败')
+    }
+  } catch (error: any) {
+    if (!error.messageShown) {
+      showError('加载登录凭据失败: ' + error.message)
+    }
+  } finally {
+    loadingCredential.value = false
+  }
 }, { immediate: true })
 
 const handleClose = () => {
+  if (saving.value || loggingIn.value) return
   emit('update:modelValue', false)
 }
 
-const handleSubmit = async () => {
+const saveCredential = async () => {
   if (!props.account) return
-  try {
-    const data: Record<string, unknown> = {
-      accountId: props.account.id,
-      loginUsername: formData.value.loginUsername.trim()
-    }
-    if (formData.value.clearPassword) {
-      data.clearLoginPassword = true
-    } else if (formData.value.loginPassword) {
-      data.loginPassword = formData.value.loginPassword
-    }
+  const data: Record<string, unknown> = {
+    accountId: props.account.id,
+    loginUsername: formData.value.loginUsername.trim()
+  }
+  if (formData.value.clearPassword) {
+    data.clearLoginPassword = true
+  } else if (formData.value.loginPassword) {
+    data.loginPassword = formData.value.loginPassword
+  }
 
-    const response = await updateAccount(data)
-    if (response.code === 0 || response.code === 200) {
-      showSuccess('登录凭据已保存')
-      handleClose()
-      emit('success')
-    } else {
-      throw new Error(response.msg || '保存失败')
-    }
+  const response = await updateAccount(data)
+  if (response.code === 0 || response.code === 200) return
+  throw new Error(response.msg || '保存失败')
+}
+
+const handleSubmit = async () => {
+  if (!props.account || saving.value) return
+  saving.value = true
+  try {
+    await saveCredential()
+    showSuccess('登录凭据已保存')
+    handleClose()
+    emit('success')
   } catch (error: any) {
     if (!error.messageShown) {
       showError('保存失败: ' + error.message)
     }
+  } finally {
+    saving.value = false
+  }
+}
+
+const handlePasswordLogin = async () => {
+  if (!props.account || loggingIn.value || !canPasswordLogin.value) return
+  loggingIn.value = true
+  try {
+    if (hasCredentialChanges.value) {
+      await saveCredential()
+    }
+    const response = await passwordLogin(props.account.id)
+    if (response.code === 0 || response.code === 200) {
+      showSuccess(response.data || response.msg || '账号密码登录成功，Cookie 已更新')
+      handleClose()
+      emit('success')
+    } else {
+      throw new Error(response.msg || '账号密码登录失败')
+    }
+  } catch (error: any) {
+    if (!error.messageShown) {
+      showError((hasCredentialChanges.value ? '保存并登录失败: ' : '账号密码登录失败: ') + error.message)
+    }
+  } finally {
+    loggingIn.value = false
   }
 }
 </script>
@@ -78,6 +151,7 @@ const handleSubmit = async () => {
         </div>
 
         <div class="modal-body">
+          <div v-if="loadingCredential" class="credential-loading">正在读取已保存登录密码...</div>
           <div class="credential-field">
             <label>登录账号</label>
             <input
@@ -90,14 +164,24 @@ const handleSubmit = async () => {
           </div>
           <div class="credential-field">
             <label>登录密码</label>
-            <input
-              v-model="formData.loginPassword"
-              type="password"
-              class="modal-input"
-              autocomplete="current-password"
-              :disabled="formData.clearPassword"
-              placeholder="留空则不修改已保存密码"
-            />
+            <div class="password-input-wrap">
+              <input
+                v-model="formData.loginPassword"
+                :type="showPassword ? 'text' : 'password'"
+                class="modal-input modal-input-password"
+                autocomplete="current-password"
+                :disabled="formData.clearPassword || loadingCredential"
+                placeholder="留空则不修改已保存密码"
+              />
+              <button
+                type="button"
+                class="password-toggle"
+                :disabled="formData.clearPassword || loadingCredential || !formData.loginPassword"
+                @click="showPassword = !showPassword"
+              >
+                {{ showPassword ? '隐藏密码' : '显示密码' }}
+              </button>
+            </div>
           </div>
           <label class="credential-check">
             <input v-model="formData.clearPassword" type="checkbox" />
@@ -106,9 +190,19 @@ const handleSubmit = async () => {
         </div>
 
         <div class="modal-footer">
-          <button class="modal-btn modal-btn-cancel" @click="handleClose">取消</button>
+          <button class="modal-btn modal-btn-cancel" :disabled="saving || loggingIn" @click="handleClose">取消</button>
           <div class="modal-divider"></div>
-          <button class="modal-btn modal-btn-primary" @click="handleSubmit">保存</button>
+          <button class="modal-btn modal-btn-primary" :disabled="saving || loggingIn || loadingCredential" @click="handleSubmit">
+            {{ saving ? '保存中...' : '保存' }}
+          </button>
+          <div class="modal-divider"></div>
+          <button
+            class="modal-btn modal-btn-login"
+            :disabled="saving || loggingIn || loadingCredential || !canPasswordLogin"
+            @click="handlePasswordLogin"
+          >
+            {{ loginButtonText }}
+          </button>
         </div>
       </div>
     </div>
@@ -192,6 +286,42 @@ const handleSubmit = async () => {
   opacity: 0.55;
   cursor: not-allowed;
 }
+.credential-loading {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0, 122, 255, 0.08);
+  color: #007aff;
+  font-size: 12px;
+}
+.password-input-wrap {
+  position: relative;
+}
+.modal-input-password {
+  padding-right: 78px;
+}
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  border: none;
+  min-width: 64px;
+  border: 1px solid rgba(0, 122, 255, 0.26);
+  border-radius: 8px;
+  background: rgba(0, 122, 255, 0.1);
+  color: #007aff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+.password-toggle:disabled {
+  color: #8e8e93;
+  border-color: rgba(142, 142, 147, 0.24);
+  background: rgba(142, 142, 147, 0.1);
+  opacity: 1;
+  cursor: not-allowed;
+}
 .credential-check {
   display: inline-flex;
   align-items: center;
@@ -211,15 +341,22 @@ const handleSubmit = async () => {
 }
 .modal-btn {
   flex: 1;
+  min-width: 0;
   border: none;
   background: transparent;
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 500;
   cursor: pointer;
   color: #333;
+  white-space: nowrap;
 }
 .modal-btn:active { opacity: 0.55; }
+.modal-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .modal-btn-primary { color: #007aff; }
+.modal-btn-login { color: #14a46c; }
 .modal-divider {
   width: 0.5px;
   background: rgba(0, 0, 0, 0.1);
@@ -248,6 +385,20 @@ const handleSubmit = async () => {
   }
   .modal-input:focus {
     background: rgba(255, 255, 255, 0.14);
+  }
+  .credential-loading {
+    background: rgba(102, 183, 255, 0.14);
+    color: #66b7ff;
+  }
+  .password-toggle {
+    color: #66b7ff;
+    border-color: rgba(102, 183, 255, 0.36);
+    background: rgba(102, 183, 255, 0.16);
+  }
+  .password-toggle:disabled {
+    color: #8e8e93;
+    border-color: rgba(142, 142, 147, 0.3);
+    background: rgba(142, 142, 147, 0.12);
   }
   .modal-divider {
     background: rgba(255, 255, 255, 0.12);

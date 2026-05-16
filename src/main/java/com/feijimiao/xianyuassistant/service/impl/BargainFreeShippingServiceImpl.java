@@ -6,6 +6,7 @@ import com.feijimiao.xianyuassistant.entity.XianyuCookie;
 import com.feijimiao.xianyuassistant.mapper.XianyuCookieMapper;
 import com.feijimiao.xianyuassistant.service.AccountIdentityGuard;
 import com.feijimiao.xianyuassistant.service.BargainFreeShippingService;
+import com.feijimiao.xianyuassistant.service.CookieStateService;
 import com.feijimiao.xianyuassistant.utils.SessionCookieJar;
 import com.feijimiao.xianyuassistant.utils.XianyuSignUtils;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +40,9 @@ public class BargainFreeShippingServiceImpl implements BargainFreeShippingServic
 
     @Autowired
     private AccountIdentityGuard accountIdentityGuard;
+
+    @Autowired
+    private CookieStateService cookieStateService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private String apiUrl = DEFAULT_API_URL;
@@ -160,9 +164,9 @@ public class BargainFreeShippingServiceImpl implements BargainFreeShippingServic
             return;
         }
         cookie.setCookieText(newCookieText);
-        cookie.setCookieStatus(1);
         cookie.setMH5Tk(XianyuSignUtils.parseCookies(newCookieText).get("_m_h5_tk"));
         cookieMapper.updateById(cookie);
+        cookieStateService.markValid(accountId);
     }
 
     private void validateInput(FreeShippingRequest request) {

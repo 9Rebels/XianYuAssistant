@@ -1,8 +1,13 @@
 package com.feijimiao.xianyuassistant.service.impl;
 
 import com.feijimiao.xianyuassistant.entity.XianyuCookie;
+import com.feijimiao.xianyuassistant.enums.CookieStatus;
+import com.feijimiao.xianyuassistant.mapper.XianyuAccountMapper;
 import com.feijimiao.xianyuassistant.mapper.XianyuCookieMapper;
+import com.feijimiao.xianyuassistant.service.AccountIdentityGuard;
 import com.feijimiao.xianyuassistant.service.BargainFreeShippingService;
+import com.feijimiao.xianyuassistant.service.CookieStateService;
+import com.feijimiao.xianyuassistant.utils.AccountProxyHelper;
 import okhttp3.OkHttpClient;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
@@ -88,6 +93,15 @@ class BargainFreeShippingServiceImplTest {
         ReflectionTestUtils.setField(service, "cookieMapper", cookieMapper);
         ReflectionTestUtils.setField(service, "apiUrl", apiUrl);
         ReflectionTestUtils.setField(service, "okHttpClient", new OkHttpClient());
+        AccountIdentityGuard accountIdentityGuard = mock(AccountIdentityGuard.class);
+        when(accountIdentityGuard.canUseCookie(any(), any())).thenReturn(true);
+        ReflectionTestUtils.setField(service, "accountIdentityGuard", accountIdentityGuard);
+        AccountProxyHelper accountProxyHelper = new AccountProxyHelper();
+        ReflectionTestUtils.setField(accountProxyHelper, "accountMapper", mock(XianyuAccountMapper.class));
+        ReflectionTestUtils.setField(service, "accountProxyHelper", accountProxyHelper);
+        CookieStateService cookieStateService = mock(CookieStateService.class);
+        when(cookieStateService.markValid(any())).thenReturn(true);
+        ReflectionTestUtils.setField(service, "cookieStateService", cookieStateService);
         return service;
     }
 
@@ -97,7 +111,7 @@ class BargainFreeShippingServiceImplTest {
         cookie.setXianyuAccountId(1L);
         cookie.setCookieText("_m_h5_tk=" + mh5tk + "; unb=2219250854984");
         cookie.setMH5Tk(mh5tk);
-        cookie.setCookieStatus(1);
+        cookie.setCookieStatus(CookieStatus.VALID.getCode());
         return cookie;
     }
 

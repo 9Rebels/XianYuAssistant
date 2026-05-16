@@ -5,12 +5,15 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.feijimiao.xianyuassistant.entity.XianyuAccount;
 import com.feijimiao.xianyuassistant.entity.XianyuCookie;
+import com.feijimiao.xianyuassistant.enums.CookieStatus;
 import com.feijimiao.xianyuassistant.event.account.AccountRemovedEvent;
 import com.feijimiao.xianyuassistant.exception.CaptchaRequiredException;
 import com.feijimiao.xianyuassistant.mapper.XianyuCookieMapper;
 
 import com.feijimiao.xianyuassistant.service.AccountService;
+import com.feijimiao.xianyuassistant.service.AccountStateService;
 import com.feijimiao.xianyuassistant.service.CaptchaService;
+import com.feijimiao.xianyuassistant.service.CookieStateService;
 import com.feijimiao.xianyuassistant.service.CookieRefreshService;
 import com.feijimiao.xianyuassistant.service.EmailNotifyService;
 import com.feijimiao.xianyuassistant.service.NotificationService;
@@ -82,6 +85,12 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
 
     @Autowired
     private com.feijimiao.xianyuassistant.utils.AccountProxyHelper accountProxyHelper;
+
+    @Autowired
+    private CookieStateService cookieStateService;
+
+    @Autowired
+    private AccountStateService accountStateService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -513,7 +522,7 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
                         log.error("【账号{}】❌ 触发风控: {}", accountId, retList);
                         log.error("【账号{}】{}", accountId, MANUAL_COOKIE_UPDATE_MESSAGE);
                         markCaptchaWaiting(accountId, MANUAL_COOKIE_UPDATE_MESSAGE);
-                        updateCookieStatus(accountId, 3);
+                        updateCookieStatus(accountId, CookieStatus.INVALID);
                         notifyRiskControlIfNeeded(accountId, "Token 获取时触发风控验证", MANUAL_COOKIE_UPDATE_MESSAGE);
                         throw new CaptchaRequiredException(MANUAL_COOKIE_UPDATE_MESSAGE, MANUAL_COOKIE_UPDATE_MESSAGE);
                     }
@@ -607,7 +616,7 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
             markCaptchaWaiting(accountId, MANUAL_COOKIE_UPDATE_MESSAGE);
             
             // 标记为失效（风控）
-            updateCookieStatus(accountId, 3); // 3表示失效（风控）
+            updateCookieStatus(accountId, CookieStatus.INVALID);
 
             // 记录操作日志
             operationLogService.log(accountId,
@@ -637,7 +646,7 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
             // 不再循环，直接标记过期并通知人工介入。
             if (passwordLoginUsed) {
                 log.error("【账号{}】账密登录后Token仍Session过期，标记Cookie为过期", accountId);
-                updateCookieStatus(accountId, 2, true);
+                updateCookieStatus(accountId, CookieStatus.EXPIRED, true);
 
                 operationLogService.log(accountId,
                     com.feijimiao.xianyuassistant.constants.OperationConstants.Type.REFRESH,
@@ -665,7 +674,7 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
                 }
 
                 log.error("【账号{}】账密登录恢复失败，标记Cookie为过期", accountId);
-                updateCookieStatus(accountId, 2, true);
+                updateCookieStatus(accountId, CookieStatus.EXPIRED, true);
 
                 operationLogService.log(accountId,
                     com.feijimiao.xianyuassistant.constants.OperationConstants.Type.REFRESH,
@@ -683,7 +692,7 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
             log.warn("【账号{}】检测到Session/令牌过期，尝试通过hasLogin自动续期...(已累计{}次)",
                     accountId, hasLoginAttempts);
             // 不立即标记为过期，先尝试自动续期
-            // updateCookieStatus(accountId, 2);
+            // updateCookieStatus(accountId, CookieStatus.EXPIRED);
 
             operationLogService.log(accountId,
                 com.feijimiao.xianyuassistant.constants.OperationConstants.Type.REFRESH,
@@ -732,7 +741,7 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
         if (hasLoginRetryCount >= MAX_COOKIE_RETRY_COUNT) {
             log.error("【账号{}】hasLogin刷新重试次数已达上限，Cookie已彻底过期，无法自动续期", accountId);
             // 确认无法自动续期后，才标记为过期并触发邮件通知
-            updateCookieStatus(accountId, 2, true);
+            updateCookieStatus(accountId, CookieStatus.EXPIRED, true);
 
             operationLogService.log(accountId,
                 com.feijimiao.xianyuassistant.constants.OperationConstants.Type.REFRESH,
@@ -955,8 +964,8 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
                         new LambdaUpdateWrapper<XianyuCookie>()
                                 .eq(XianyuCookie::getXianyuAccountId, accountId)
                                 .set(XianyuCookie::getCookieText, newCookieStr)
-                                .set(XianyuCookie::getCookieStatus, 1)
                 );
+                cookieStateService.markValid(accountId);
 
                 // 如果_m_h5_tk更新了，也更新mH5Tk字段
                 if (mh5tkUpdated && newMh5tk != null) {
@@ -1129,32 +1138,14 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
      * 更新账号状态为需要验证（-2）
      */
     private void updateAccountStatusToCaptchaRequired(Long accountId) {
-        try {
-            com.feijimiao.xianyuassistant.entity.XianyuAccount account = xianyuAccountMapper.selectById(accountId);
-            if (account != null) {
-                account.setStatus(-2);
-                xianyuAccountMapper.updateById(account);
-                log.info("【账号{}】账号状态已更新为-2（需要验证）", accountId);
-            }
-        } catch (Exception e) {
-            log.error("【账号{}】更新账号状态失败", accountId, e);
-        }
+        accountStateService.markCaptchaRequired(accountId, "WebSocket Token获取需要人机验证");
     }
 
     /**
      * 更新账号状态为正常（1）
      */
     private void updateAccountStatusToNormal(Long accountId) {
-        try {
-            com.feijimiao.xianyuassistant.entity.XianyuAccount account = xianyuAccountMapper.selectById(accountId);
-            if (account != null && account.getStatus() == -2) {
-                account.setStatus(1);
-                xianyuAccountMapper.updateById(account);
-                log.info("【账号{}】账号状态已恢复为1（正常）", accountId);
-            }
-        } catch (Exception e) {
-            log.error("【账号{}】更新账号状态失败", accountId, e);
-        }
+        accountStateService.restoreNormalIfCaptchaRequired(accountId, "WebSocket Token获取成功");
     }
 
     /**
@@ -1162,7 +1153,7 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
      * @param accountId 账号ID
      * @param status Cookie状态
      */
-    private void updateCookieStatus(Long accountId, Integer status) {
+    private void updateCookieStatus(Long accountId, CookieStatus status) {
         updateCookieStatus(accountId, status, false);
     }
 
@@ -1172,42 +1163,8 @@ public class WebSocketTokenServiceImpl implements WebSocketTokenService {
      * @param status Cookie状态
      * @param sendNotify 是否发送邮件通知（仅当确认无法自动续期时才为true）
      */
-    private void updateCookieStatus(Long accountId, Integer status, boolean sendNotify) {
-        try {
-            XianyuCookie currentCookie = xianyuCookieMapper.selectOne(
-                    new LambdaQueryWrapper<XianyuCookie>()
-                            .eq(XianyuCookie::getXianyuAccountId, accountId)
-                            .orderByDesc(XianyuCookie::getCreatedTime)
-                            .last("LIMIT 1")
-            );
-            Integer oldStatus = currentCookie != null ? currentCookie.getCookieStatus() : null;
-
-            xianyuCookieMapper.update(null,
-                    new LambdaUpdateWrapper<XianyuCookie>()
-                            .eq(XianyuCookie::getXianyuAccountId, accountId)
-                            .set(XianyuCookie::getCookieStatus, status)
-            );
-            String statusText = status == 2 ? "过期" : status == 3 ? "失效" : "未知";
-            log.info("【账号{}】Cookie状态已更新为{}({})", accountId, status, statusText);
-
-            // 只有在明确指定发送通知时才发送邮件（即确认无法自动续期后）
-            if (sendNotify && Objects.equals(status, 2) && !Objects.equals(oldStatus, 2)) {
-                XianyuAccount account = xianyuAccountMapper.selectById(accountId);
-                String accountNote = account != null ? account.getAccountNote() : null;
-                log.info("【账号{}】Cookie已确认无法自动续期，触发Cookie过期通知流程", accountId);
-                notificationService.notifyEvent(
-                        NotificationService.EVENT_COOKIE_EXPIRE,
-                        "【闲鱼助手】Cookie 已过期",
-                        "账号ID：" + accountId
-                                + "\n账号备注：" + (accountNote == null || accountNote.isBlank() ? "-" : accountNote)
-                                + "\n说明：该账号 Cookie 已确认无法自动续期，请重新登录或刷新 Cookie。"
-                );
-            } else if (Objects.equals(status, 2) && !Objects.equals(oldStatus, 2)) {
-                log.info("【账号{}】Cookie被标记为过期，但系统将尝试自动续期，暂不发送邮件通知", accountId);
-            }
-        } catch (Exception e) {
-            log.error("【账号{}】更新Cookie状态失败", accountId, e);
-        }
+    private void updateCookieStatus(Long accountId, CookieStatus status, boolean sendNotify) {
+        cookieStateService.updateStatus(accountId, status, sendNotify);
     }
 
     /**

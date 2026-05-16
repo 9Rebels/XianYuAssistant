@@ -3,24 +3,20 @@ package com.feijimiao.xianyuassistant.service.impl;
 import com.feijimiao.xianyuassistant.constants.OperationConstants;
 import com.feijimiao.xianyuassistant.entity.XianyuCookie;
 import com.feijimiao.xianyuassistant.exception.CaptchaRequiredException;
-import com.feijimiao.xianyuassistant.mapper.XianyuCookieMapper;
 import com.feijimiao.xianyuassistant.service.CaptchaService;
 import com.feijimiao.xianyuassistant.service.CookieRecoveryService;
 import com.feijimiao.xianyuassistant.service.CookieRefreshService;
+import com.feijimiao.xianyuassistant.service.CookieStateService;
 import com.feijimiao.xianyuassistant.service.OperationLogService;
 import com.feijimiao.xianyuassistant.service.bo.CookieRecoveryResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-
 @Slf4j
 @Service
 public class CookieRecoveryServiceImpl implements CookieRecoveryService {
     private static final String CAPTCHA_TARGET_URL = "https://www.goofish.com/im";
-    private static final DateTimeFormatter DATETIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     @Autowired
     private CookieRefreshService cookieRefreshService;
@@ -32,7 +28,7 @@ public class CookieRecoveryServiceImpl implements CookieRecoveryService {
     private CaptchaService captchaService;
 
     @Autowired
-    private XianyuCookieMapper cookieMapper;
+    private CookieStateService cookieStateService;
 
     @Override
     public CookieRecoveryResult recover(Long accountId, String operationName, String reason) {
@@ -105,27 +101,16 @@ public class CookieRecoveryServiceImpl implements CookieRecoveryService {
     }
 
     private String getLatestCookieText(Long accountId) {
-        XianyuCookie cookie = cookieMapper.selectByAccountId(accountId);
+        XianyuCookie cookie = cookieStateService.latestCookie(accountId);
         return cookie != null ? cookie.getCookieText() : null;
     }
 
     private void markUnrecoverable(Long accountId, String reason) {
         if (isRiskReason(reason)) {
-            updateCookieStatus(accountId, 3);
+            cookieStateService.markInvalid(accountId, reason);
             return;
         }
-        updateCookieStatus(accountId, 2);
-    }
-
-    private void updateCookieStatus(Long accountId, Integer cookieStatus) {
-        XianyuCookie cookie = cookieMapper.selectByAccountId(accountId);
-        if (cookie == null) {
-            log.warn("【账号{}】未找到Cookie记录，无法标记状态为{}", accountId, cookieStatus);
-            return;
-        }
-        cookie.setCookieStatus(cookieStatus);
-        cookie.setUpdatedTime(LocalDateTime.now().format(DATETIME_FORMATTER));
-        cookieMapper.updateById(cookie);
+        cookieStateService.markExpired(accountId, false);
     }
 
     private String buildDetectedDesc(String operationName, String reason) {

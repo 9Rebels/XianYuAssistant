@@ -16,8 +16,14 @@ CREATE TABLE IF NOT EXISTS sys_login_token (
     user_id BIGINT NOT NULL,                           -- 关联用户ID
     token VARCHAR(500) NOT NULL,                       -- JWT Token
     device_id VARCHAR(100),                            -- 设备标识（User-Agent哈希）
+    device_name VARCHAR(200),                          -- 设备名称
+    browser_name VARCHAR(100),                         -- 浏览器名称
+    os_name VARCHAR(100),                              -- 操作系统名称
+    user_agent VARCHAR(500),                           -- User-Agent
     login_ip VARCHAR(50),                              -- 登录IP
     expire_time DATETIME NOT NULL,                     -- 过期时间
+    last_active_time DATETIME,                         -- 最后活跃时间
+    status TINYINT DEFAULT 1,                          -- 状态 1:有效 0:已退出 -1:已踢出
     created_time DATETIME DEFAULT (datetime('now', 'localtime')),  -- 创建时间
     updated_time DATETIME DEFAULT (datetime('now', 'localtime')),  -- 更新时间
     FOREIGN KEY (user_id) REFERENCES sys_user(id)
@@ -28,6 +34,7 @@ CREATE INDEX IF NOT EXISTS idx_sys_user_username ON sys_user(username);
 CREATE INDEX IF NOT EXISTS idx_sys_login_token_user_id ON sys_login_token(user_id);
 CREATE INDEX IF NOT EXISTS idx_sys_login_token_token ON sys_login_token(token);
 CREATE INDEX IF NOT EXISTS idx_sys_login_token_expire_time ON sys_login_token(expire_time);
+CREATE INDEX IF NOT EXISTS idx_sys_login_token_status ON sys_login_token(status);
 
 -- 触发器
 CREATE TRIGGER IF NOT EXISTS update_sys_user_time
@@ -69,7 +76,9 @@ CREATE TABLE IF NOT EXISTS xianyu_account (
     proxy_password VARCHAR(200),                  -- 代理认证密码
     login_username VARCHAR(200),                  -- 闲鱼登录用户名（手机号/邮箱）
     login_password VARCHAR(500),                  -- 闲鱼登录密码
-    status TINYINT DEFAULT 1,                     -- 账号状态 1:正常 -1:需要手机号验证
+    status TINYINT DEFAULT 1,                     -- 账号状态 1:正常 -1:需要手机号验证 -2:需要人机验证
+    state_reason TEXT,                            -- 状态变更原因
+    state_updated_time DATETIME,                  -- 状态变更时间
     created_time DATETIME DEFAULT (datetime('now', 'localtime')),  -- 创建时间
     updated_time DATETIME DEFAULT (datetime('now', 'localtime'))   -- 更新时间
 );
@@ -81,6 +90,8 @@ CREATE TABLE IF NOT EXISTS xianyu_cookie (
     cookie_text TEXT,                             -- 完整的Cookie字符串
     m_h5_tk VARCHAR(500),                         -- _m_h5_tk token（用于API签名）
     cookie_status TINYINT DEFAULT 1,              -- Cookie状态 1:有效 2:过期 3:失效
+    state_reason TEXT,                            -- Cookie状态变更原因
+    state_updated_time DATETIME,                  -- Cookie状态变更时间
     expire_time DATETIME,                         -- 过期时间
     websocket_token TEXT,                         -- WebSocket accessToken
     token_expire_time INTEGER,                    -- Token过期时间戳（毫秒）
@@ -91,8 +102,11 @@ CREATE TABLE IF NOT EXISTS xianyu_cookie (
 
 -- 创建索引
 CREATE INDEX IF NOT EXISTS idx_account_unb ON xianyu_account(unb);
+CREATE INDEX IF NOT EXISTS idx_account_status ON xianyu_account(status);
+CREATE INDEX IF NOT EXISTS idx_account_state_updated_time ON xianyu_account(state_updated_time);
 CREATE INDEX IF NOT EXISTS idx_cookie_account_id ON xianyu_cookie(xianyu_account_id);
 CREATE INDEX IF NOT EXISTS idx_cookie_status ON xianyu_cookie(cookie_status);
+CREATE INDEX IF NOT EXISTS idx_cookie_state_updated_time ON xianyu_cookie(state_updated_time);
 CREATE INDEX IF NOT EXISTS idx_token_expire_time ON xianyu_cookie(token_expire_time);
 
 -- 创建更新时间触发器（SQLite不支持ON UPDATE CURRENT_TIMESTAMP，需要用触发器）

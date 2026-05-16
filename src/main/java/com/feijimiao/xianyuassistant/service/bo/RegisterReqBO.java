@@ -11,4 +11,7 @@ import lombok.Data;
 public class RegisterReqBO {
     private String username;
     private String password;
+    private String ip;
+    private String deviceId;
+    private String userAgent;
 }

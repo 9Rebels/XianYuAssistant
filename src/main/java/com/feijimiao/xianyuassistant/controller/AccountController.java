@@ -10,6 +10,7 @@ import com.feijimiao.xianyuassistant.controller.dto.DeleteAccountRespDTO;
 import com.feijimiao.xianyuassistant.controller.dto.GetAccountDetailReqDTO;
 import com.feijimiao.xianyuassistant.controller.dto.GetAccountDetailRespDTO;
 import com.feijimiao.xianyuassistant.controller.dto.GetAccountListRespDTO;
+import com.feijimiao.xianyuassistant.controller.dto.LoginCredentialRespDTO;
 import com.feijimiao.xianyuassistant.controller.dto.ManualAddAccountReqDTO;
 import com.feijimiao.xianyuassistant.controller.dto.RefreshAccountProfileReqDTO;
 import com.feijimiao.xianyuassistant.controller.dto.RefreshAccountProfileRespDTO;
@@ -274,6 +275,30 @@ public class AccountController {
         } catch (Exception e) {
             log.error("获取账号详情失败", e);
             return ResultObject.failed("获取账号详情失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 获取账号密码登录凭据。
+     */
+    @PostMapping("/loginCredential")
+    public ResultObject<LoginCredentialRespDTO> getLoginCredential(@RequestBody GetAccountDetailReqDTO reqDTO) {
+        try {
+            if (reqDTO.getAccountId() == null) {
+                return ResultObject.failed("账号ID不能为空");
+            }
+            XianyuAccount account = accountMapper.selectById(reqDTO.getAccountId());
+            if (account == null) {
+                return ResultObject.failed("账号不存在");
+            }
+            LoginCredentialRespDTO respDTO = new LoginCredentialRespDTO();
+            respDTO.setAccountId(account.getId());
+            respDTO.setLoginUsername(account.getLoginUsername());
+            respDTO.setLoginPassword(account.getLoginPassword());
+            return ResultObject.success(respDTO);
+        } catch (Exception e) {
+            log.error("获取登录凭据失败", e);
+            return ResultObject.failed("获取登录凭据失败: " + e.getMessage());
         }
     }
 
