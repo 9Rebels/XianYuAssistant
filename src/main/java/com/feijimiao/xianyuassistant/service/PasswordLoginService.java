@@ -153,6 +153,10 @@ public class PasswordLoginService {
             Browser browser = playwright.chromium().connectOverCDP(launcher.getCdpUrl());
             BrowserContext context = browser.contexts().isEmpty()
                     ? browser.newContext() : browser.contexts().get(0);
+            String stealthScript = fingerprintService.stealthScript(profile);
+            if (stealthScript != null && !stealthScript.isBlank()) {
+                context.addInitScript(stealthScript);
+            }
             context.addInitScript(headfulStealthScript());
 
             try {
